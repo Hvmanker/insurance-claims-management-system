@@ -1,5 +1,6 @@
 package com.hvmanker.insurance.common;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -23,8 +24,9 @@ public final class PortalPasswordValidator {
         if (password == null) {
             return messages;
         }
-        int length = password.length();
-        if (length < MIN_LENGTH || length > MAX_LENGTH) {
+        int charLength = password.length();
+        int utf8ByteLength = password.getBytes(StandardCharsets.UTF_8).length;
+        if (charLength < MIN_LENGTH || utf8ByteLength > MAX_LENGTH) {
             messages.add("size must be between " + MIN_LENGTH + " and " + MAX_LENGTH);
         }
         if (!UPPERCASE.matcher(password).matches()) {
