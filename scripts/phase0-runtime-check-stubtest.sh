@@ -173,13 +173,51 @@ if ! grep -q "$left_tmp" "$LOG_FILE"; then
 fi
 rm -f "$left_tmp" "$LOG_FILE"
 
+echo "stub: no-teardown project names (single ts) regex and real compose config -q"
+export PHASE0_NO_TEARDOWN=1
+export COMPOSE_PROJECT=phase0check
+PHASE0_COMPOSE_RUN_TS="20261011t120000z"
+p_startup="$(phase0_compose_project_for_phase startup)"
+p_c04="$(phase0_compose_project_for_phase c04)"
+p_c05="$(phase0_compose_project_for_phase c05)"
+for pn in "$p_startup" "$p_c04" "$p_c05"; do
+  if ! phase0_runtime_compose_project_name_valid "$pn"; then
+    echo "FAIL: generated name ${pn} failed ^phase0check(-[0-9a-z_-]+)+$" >&2
+    exit 1
+  fi
+done
+if [[ "$p_startup" != phase0check-20261011t120000z-startup ]] \
+  || [[ "$p_c04" != phase0check-20261011t120000z-c04 ]] \
+  || [[ "$p_c05" != phase0check-20261011t120000z-c05 ]]; then
+  echo "FAIL: startup/c04/c05 must share one timestamp prefix" >&2
+  exit 1
+fi
+_system_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+_real_docker=""
+if PATH="${_system_path}" command -v docker >/dev/null 2>&1 \
+  && PATH="${_system_path}" docker compose version >/dev/null 2>&1; then
+  _real_docker="$(PATH="${_system_path}" command -v docker)"
+fi
+if [[ -n "$_real_docker" ]]; then
+  export PHASE0_DOCKER_BIN="${_real_docker}"
+  for pn in "$p_startup" "$p_c04" "$p_c05"; do
+    if ! phase0_validate_suffixed_compose_project_name "$pn" >/dev/null; then
+      echo "FAIL: real docker compose config -q rejected valid name ${pn}" >&2
+      exit 1
+    fi
+  done
+  echo "stub: real docker compose config -q validation ran for startup, c04, c05"
+else
+  echo "SKIP: real docker compose CLI not available; config -q name validation not run"
+fi
+
 echo "stub: PHASE0_NO_TEARDOWN compose project names and stop-before-up"
 DOCKER_STUB_LOG="$(mktemp)"
 export DOCKER_STUB_LOG
 cat > "${STUB_BIN}/docker" <<'DOCKERSTUB'
 #!/usr/bin/env bash
 printf '%s\n' "docker $*" >> "${DOCKER_STUB_LOG}"
-if [[ "${1:-}" == "compose" && "${2:-}" == "-p" ]]; then
+if [[ "${1:-}" == "compose" ]]; then
   exit 0
 fi
 exit 0
@@ -191,18 +229,12 @@ PHASE0_STOPPED_PROJECTS=()
 PHASE0_USED_PROJECTS=()
 PHASE0_CREATED_PROJECTS=()
 PHASE0_ACTIVE_COMPOSE_PROJECT=""
-p_startup="$(phase0_compose_project_for_phase startup)"
-if [[ ! "$p_startup" =~ ^phase0check-[0-9]{8}T[0-9]{6}Z-startup$ ]]; then
-  echo "FAIL: startup project name ${p_startup}" >&2
-  exit 1
-fi
+PHASE0_COMPOSE_RUN_TS="20261011t120000z"
+PHASE0_PROJECT_STARTUP="$(phase0_compose_project_for_phase startup)"
+PHASE0_PROJECT_C04="$(phase0_compose_project_for_phase c04)"
+PHASE0_PROJECT_C05="$(phase0_compose_project_for_phase c05)"
 phase0_compose_stop_project "${REQUIRED_COMPOSE_PROJECT}"
-phase0_switch_compose_project "$p_startup"
-p_c04="$(phase0_compose_project_for_phase c04)"
-if [[ ! "$p_c04" =~ ^phase0check-[0-9]{8}T[0-9]{6}Z-c04$ ]]; then
-  echo "FAIL: c04 project name ${p_c04}" >&2
-  exit 1
-fi
+phase0_switch_compose_project "${PHASE0_PROJECT_STARTUP}"
 phase0_prepare_fresh_compose_stack "c04"
 if ! grep -qE 'compose -p phase0check .* stop' "$DOCKER_STUB_LOG"; then
   echo "FAIL: expected compose stop before fresh stack" >&2
@@ -215,6 +247,26 @@ fi
 stop_count="$(grep -c 'compose -p .* stop' "$DOCKER_STUB_LOG" || true)"
 if [[ "$stop_count" -lt 2 ]]; then
   echo "FAIL: expected at least two compose stop calls, got ${stop_count}" >&2
+  exit 1
+fi
+
+echo "stub: invalid uppercase compose project name exits 2 before any stop"
+PHASE0_STOPPED_PROJECTS=()
+: >"$DOCKER_STUB_LOG"
+set +e
+phase0_validate_suffixed_compose_project_name "phase0check-20261011T183536Z-startup" >/dev/null 2>&1
+upper_rc=$?
+set -e
+if [[ "$upper_rc" -ne 2 ]]; then
+  echo "FAIL: uppercase project name should exit validation with status 2, got ${upper_rc}" >&2
+  exit 1
+fi
+if ((${#PHASE0_STOPPED_PROJECTS[@]} != 0)); then
+  echo "FAIL: uppercase validation must not record stopped projects" >&2
+  exit 1
+fi
+if grep -qE 'compose -p .* stop' "$DOCKER_STUB_LOG"; then
+  echo "FAIL: uppercase validation must not invoke compose stop" >&2
   exit 1
 fi
 

@@ -57,6 +57,10 @@ PHASE0_ACTIVE_COMPOSE_PROJECT=""
 declare -a PHASE0_STOPPED_PROJECTS=()
 declare -a PHASE0_USED_PROJECTS=()
 declare -a PHASE0_CREATED_PROJECTS=()
+PHASE0_COMPOSE_RUN_TS=""
+PHASE0_PROJECT_STARTUP=""
+PHASE0_PROJECT_C04=""
+PHASE0_PROJECT_C05=""
 
 phase0_no_teardown_enabled() {
   [[ "${PHASE0_NO_TEARDOWN:-}" == "1" ]]
@@ -65,11 +69,56 @@ phase0_no_teardown_enabled() {
 # COMPOSE_PROJECT: exactly phase0check, or phase0check-<suffix> only with PHASE0_NO_TEARDOWN=1.
 phase0_compose_project_name_valid() {
   local cp="$1"
-  [[ "$cp" =~ ^phase0check(-[0-9A-Za-z-]+)?$ ]] || return 1
+  [[ "$cp" =~ ^phase0check(-[0-9a-z_-]+)?$ ]] || return 1
   if [[ "$cp" == "${REQUIRED_COMPOSE_PROJECT}" ]]; then
     return 0
   fi
   phase0_no_teardown_enabled
+}
+
+# Per-phase compose project names (lowercase); one or more -suffix segments after phase0check.
+phase0_runtime_compose_project_name_valid() {
+  local name="$1"
+  [[ "$name" =~ ^phase0check(-[0-9a-z_-]+)+$ ]]
+}
+
+phase0_validate_suffixed_compose_project_name() {
+  local name="$1" err rc docker_bin="${PHASE0_DOCKER_BIN:-docker}"
+  if [[ "$name" == "${REQUIRED_COMPOSE_PROJECT}" ]]; then
+    return 0
+  fi
+  if ! phase0_runtime_compose_project_name_valid "$name"; then
+    printf 'compose project name %q does not match ^phase0check(-[0-9a-z_-]+)+$\n' "$name" >&2
+    return 2
+  fi
+  set +e
+  err="$("$docker_bin" compose -p "$name" --env-file "${REPO_ROOT}/.env" config -q 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    printf '%s\n' "$err" >&2
+    return 2
+  fi
+  return 0
+}
+
+phase0_assert_compose_project_accepted_by_cli() {
+  phase0_validate_suffixed_compose_project_name "$1" || exit $?
+}
+
+phase0_init_and_validate_no_teardown_projects() {
+  local n
+  if ! phase0_no_teardown_enabled; then
+    return 0
+  fi
+  PHASE0_COMPOSE_RUN_TS="$(date -u +%Y%m%dt%H%M%Sz)"
+  PHASE0_PROJECT_STARTUP="$(phase0_compose_project_for_phase startup)"
+  PHASE0_PROJECT_C04="$(phase0_compose_project_for_phase c04)"
+  PHASE0_PROJECT_C05="$(phase0_compose_project_for_phase c05)"
+  for n in "${PHASE0_PROJECT_STARTUP}" "${PHASE0_PROJECT_C04}" "${PHASE0_PROJECT_C05}"; do
+    phase0_assert_compose_project_accepted_by_cli "$n"
+  done
+  log_line "PHASE0_NO_TEARDOWN: validated compose projects (ts=${PHASE0_COMPOSE_RUN_TS}) startup=${PHASE0_PROJECT_STARTUP} c04=${PHASE0_PROJECT_C04} c05=${PHASE0_PROJECT_C05}"
 }
 
 phase0_register_tmp() {
@@ -131,7 +180,7 @@ require_compose_project_guard() {
     return 0
   fi
   if phase0_no_teardown_enabled; then
-    printf 'COMPOSE_PROJECT must match ^phase0check(-[0-9A-Za-z-]+)?$ (got %q); refusing to run.\n' \
+    printf 'COMPOSE_PROJECT must match ^phase0check(-[0-9a-z_-]+)?$ (got %q); refusing to run.\n' \
       "${cp:-<unset>}" >&2
   else
     printf 'COMPOSE_PROJECT must be exactly %q (got %q); refusing to run.\n' \
@@ -228,8 +277,10 @@ compose() {
 }
 
 phase0_compose_project_for_phase() {
-  local phase="$1" ts
-  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  local phase="$1" ts="${PHASE0_COMPOSE_RUN_TS:-}"
+  if [[ -z "$ts" ]]; then
+    ts="$(date -u +%Y%m%dt%H%M%Sz)"
+  fi
   printf '%s' "${COMPOSE_PROJECT}-${ts}-${phase}"
 }
 
@@ -288,9 +339,17 @@ phase0_switch_compose_project() {
 }
 
 phase0_prepare_fresh_compose_stack() {
-  local phase="$1"
+  local phase="$1" target=""
   if phase0_no_teardown_enabled; then
-    phase0_switch_compose_project "$(phase0_compose_project_for_phase "$phase")"
+    case "$phase" in
+      c04) target="${PHASE0_PROJECT_C04}" ;;
+      c05) target="${PHASE0_PROJECT_C05}" ;;
+      *)
+        printf 'unknown no-teardown compose phase %q\n' "$phase" >&2
+        exit 2
+        ;;
+    esac
+    phase0_switch_compose_project "$target"
     phase0_log_phase_compose_header "$phase"
   else
     compose down -v >/dev/null 2>&1 || true
@@ -1009,8 +1068,9 @@ main() {
   if phase0_no_teardown_enabled; then
     PHASE0_ACTIVE_COMPOSE_PROJECT=""
     log_line "PHASE0_NO_TEARDOWN=1: per-phase compose projects; skipping down/rm teardown"
+    phase0_init_and_validate_no_teardown_projects
     phase0_compose_stop_project "${REQUIRED_COMPOSE_PROJECT}"
-    phase0_switch_compose_project "$(phase0_compose_project_for_phase startup)"
+    phase0_switch_compose_project "${PHASE0_PROJECT_STARTUP}"
     phase0_log_phase_compose_header "startup"
     log_line "compose up -d --build (project=${PHASE0_ACTIVE_COMPOSE_PROJECT})"
   else
