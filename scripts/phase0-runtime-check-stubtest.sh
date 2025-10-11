@@ -369,6 +369,7 @@ bad_rc=0
 ) 2>/dev/null || bad_rc=$?
 good_rc=0
 PHASE0_NO_TEARDOWN=1 COMPOSE_PROJECT=phase0check-extra require_compose_project_guard || good_rc=$?
+# shellcheck disable=SC2031
 export COMPOSE_PROJECT="${saved_compose_project}"
 if [[ -n "$saved_no_teardown" ]]; then
   export PHASE0_NO_TEARDOWN="${saved_no_teardown}"
