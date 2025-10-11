@@ -192,10 +192,8 @@ phase0_validate_suffixed_compose_project_name() {
     printf 'compose rejected project name: docker compose CLI not found\n' >&2
     return 2
   fi
-  set +e
-  err="$(phase0_run_compose_config_q "$name" "$(phase0_compose_config_env_file)" 2>&1)"
-  rc=$?
-  set -e
+  rc=0
+  err="$(phase0_run_compose_config_q "$name" "$(phase0_compose_config_env_file)" 2>&1)" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     printf 'compose rejected project name: %s\n' "$err" >&2
     return 2
@@ -213,10 +211,8 @@ phase0_validate_compose_project_name_compose_only() {
     printf 'compose rejected project name: docker compose CLI not found\n' >&2
     return 2
   fi
-  set +e
-  err="$(phase0_run_compose_config_q "$name" "$(phase0_compose_config_env_file)" 2>&1)"
-  rc=$?
-  set -e
+  rc=0
+  err="$(phase0_run_compose_config_q "$name" "$(phase0_compose_config_env_file)" 2>&1)" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     printf 'compose rejected project name: %s\n' "$err" >&2
     return 2
@@ -1231,9 +1227,7 @@ run_all_checks() {
       emit_result "$nn" SKIPPED "$display" "$stub_reason"
       continue
     fi
-    set +e
-    "$fn" "$nn" "$display"
-    set -e
+    "$fn" "$nn" "$display" || :
   done
 }
 
