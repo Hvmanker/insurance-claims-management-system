@@ -11,6 +11,7 @@ export PHASE0_ORIGINAL_PATH="${PHASE0_STUB_ORIGINAL_PATH}"
 
 STUB_BIN="$(mktemp -d)"
 STUB_DOCKER_LOG=""
+STUB_DEMO_ENV_ERR=""
 
 phase0_stub_cleanup_on_exit() {
   if phase0_no_teardown_enabled; then
@@ -18,11 +19,17 @@ phase0_stub_cleanup_on_exit() {
     if [[ -n "$STUB_DOCKER_LOG" && -f "$STUB_DOCKER_LOG" ]]; then
       printf 'PHASE0_NO_TEARDOWN stub: leaving DOCKER_STUB_LOG=%s on disk\n' "$STUB_DOCKER_LOG" >&2
     fi
+    if [[ -n "$STUB_DEMO_ENV_ERR" && -f "$STUB_DEMO_ENV_ERR" ]]; then
+      printf 'PHASE0_NO_TEARDOWN stub: leaving STUB_DEMO_ENV_ERR=%s on disk\n' "$STUB_DEMO_ENV_ERR" >&2
+    fi
     return 0
   fi
   rm -rf "$STUB_BIN"
   if [[ -n "$STUB_DOCKER_LOG" && -f "$STUB_DOCKER_LOG" ]]; then
     rm -f "$STUB_DOCKER_LOG"
+  fi
+  if [[ -n "$STUB_DEMO_ENV_ERR" && -f "$STUB_DEMO_ENV_ERR" ]]; then
+    rm -f "$STUB_DEMO_ENV_ERR"
   fi
 }
 
@@ -65,6 +72,32 @@ fi
 exit 0
 STUBCOMPOSE
   chmod +x "${STUB_BIN}/docker-stub-compose"
+}
+
+# Emits many log lines then nine demo seeder markers (exercises pipefail-safe log grep).
+phase0_stub_install_high_volume_compose_logs_cli() {
+  cat > "${STUB_BIN}/docker" <<'STUBLOGS'
+#!/usr/bin/env bash
+if [[ "${1:-}" != "compose" ]]; then
+  exit 1
+fi
+shift
+if [[ " $* " == *" logs "* ]]; then
+  i=0
+  while (( i < 2500 )); do
+    printf 'filler claim-service log line %s\n' "$i"
+    i=$((i + 1))
+  done
+  n=1
+  while (( n <= 9 )); do
+    printf 'Demo portal user ready: email=stub-user-%s@insureflow.local, role=STUB\n' "$n"
+    n=$((n + 1))
+  done
+  exit 0
+fi
+exit 0
+STUBLOGS
+  chmod +x "${STUB_BIN}/docker"
 }
 
 cat > "${STUB_BIN}/curl" <<'EOF'
@@ -134,6 +167,22 @@ if ! wait_for_claim_service_http; then
   exit 1
 fi
 
+echo "stub: demo seeder log grep survives pipefail with high-volume compose logs"
+phase0_stub_install_high_volume_compose_logs_cli
+export PATH="${STUB_BIN}:${PHASE0_STUB_ORIGINAL_PATH}"
+export COMPOSE_PROJECT=phase0check
+unset PHASE0_NO_TEARDOWN
+seeder_log_count="$(claim_service_demo_seeder_log_count)"
+if [[ "$seeder_log_count" -lt 9 ]]; then
+  echo "FAIL: expected at least 9 demo seeder log lines under pipefail, got ${seeder_log_count}" >&2
+  exit 1
+fi
+if ! claim_service_demo_seeder_started; then
+  echo "FAIL: claim_service_demo_seeder_started should pass with high-volume logs under pipefail" >&2
+  exit 1
+fi
+echo "stub: demo seeder log grep OK under pipefail (count=${seeder_log_count})"
+
 echo "stub: collect_demo_password_env_names_from_fixtures finds 9 persona passwords"
 collect_demo_password_env_names_from_fixtures "$(persona_fixtures_dir)"
 if ((${#DEMO_PASSWORD_ENV_NAMES[@]} != 9)); then
@@ -151,7 +200,9 @@ if [[ "$zero_rc" -ne 2 ]]; then
 fi
 
 demo_env_err="$(mktemp)"
-trap 'rm -rf "$STUB_BIN"; rm -f "$demo_env_err"' EXIT
+if [[ "${PHASE0_NO_TEARDOWN:-}" != "1" ]]; then
+  STUB_DEMO_ENV_ERR="$demo_env_err"
+fi
 
 echo "stub: require_demo_env_vars_when_enabled fails when a demo password is unset"
 export SPRING_PROFILES_ACTIVE=demo
@@ -224,7 +275,9 @@ if ! grep -q "$left_tmp" "$LOG_FILE"; then
   echo "FAIL: PHASE0_NO_TEARDOWN cleanup should log temp path" >&2
   exit 1
 fi
-rm -f "$left_tmp" "$LOG_FILE"
+if [[ "${PHASE0_NO_TEARDOWN:-}" != "1" ]]; then
+  rm -f "$left_tmp" "$LOG_FILE"
+fi
 
 echo "stub: no-teardown project names (single ts) regex and real compose config -q"
 export PHASE0_NO_TEARDOWN=1
@@ -385,6 +438,8 @@ if [[ "$good_rc" -ne 0 ]]; then
   exit 1
 fi
 
-rm -f "$DOCKER_STUB_LOG"
+if [[ "${PHASE0_NO_TEARDOWN:-}" != "1" ]]; then
+  rm -f "$DOCKER_STUB_LOG"
+fi
 
 echo "stub: all OK"

@@ -72,6 +72,25 @@ phase0_no_teardown_enabled() {
   [[ "${PHASE0_NO_TEARDOWN:-}" == "1" ]]
 }
 
+phase0_bash_errexit_enabled() {
+  [[ $- == *e* ]]
+}
+
+phase0_bash_errexit_off_if_on() {
+  if phase0_bash_errexit_enabled; then
+    set +e
+    return 0
+  fi
+  return 1
+}
+
+phase0_bash_errexit_restore_if_was_on() {
+  local was_on="$1"
+  if [[ "$was_on" == "1" ]]; then
+    set -e
+  fi
+}
+
 # COMPOSE_PROJECT: exactly phase0check, or phase0check-<suffix> only with PHASE0_NO_TEARDOWN=1.
 phase0_compose_project_name_valid() {
   local cp="$1"
@@ -180,7 +199,7 @@ phase0_run_compose_config_q() {
 }
 
 phase0_validate_suffixed_compose_project_name() {
-  local name="$1" err
+  local name="$1" err errexit_was=0 rc=0
   if [[ "$name" == "${REQUIRED_COMPOSE_PROJECT}" ]]; then
     return 0
   fi
@@ -192,7 +211,12 @@ phase0_validate_suffixed_compose_project_name() {
     printf 'compose rejected project name: docker compose CLI not found\n' >&2
     return 2
   fi
-  if ! err="$(phase0_run_compose_config_q "$name" "$(phase0_compose_config_env_file)" 2>&1)"; then
+  if phase0_bash_errexit_off_if_on; then
+    errexit_was=1
+  fi
+  err="$(phase0_run_compose_config_q "$name" "$(phase0_compose_config_env_file)" 2>&1)" || rc=$?
+  phase0_bash_errexit_restore_if_was_on "$errexit_was"
+  if [[ "$rc" -ne 0 ]]; then
     printf 'compose rejected project name: %s\n' "$err" >&2
     return 2
   fi
@@ -201,7 +225,7 @@ phase0_validate_suffixed_compose_project_name() {
 
 # Compose config -q only (no regex); for asserting compose rejects invalid project names.
 phase0_validate_compose_project_name_compose_only() {
-  local name="$1" err
+  local name="$1" err errexit_was=0 rc=0
   if [[ "$name" == "${REQUIRED_COMPOSE_PROJECT}" ]]; then
     return 0
   fi
@@ -209,7 +233,12 @@ phase0_validate_compose_project_name_compose_only() {
     printf 'compose rejected project name: docker compose CLI not found\n' >&2
     return 2
   fi
-  if ! err="$(phase0_run_compose_config_q "$name" "$(phase0_compose_config_env_file)" 2>&1)"; then
+  if phase0_bash_errexit_off_if_on; then
+    errexit_was=1
+  fi
+  err="$(phase0_run_compose_config_q "$name" "$(phase0_compose_config_env_file)" 2>&1)" || rc=$?
+  phase0_bash_errexit_restore_if_was_on "$errexit_was"
+  if [[ "$rc" -ne 0 ]]; then
     printf 'compose rejected project name: %s\n' "$err" >&2
     return 2
   fi
@@ -674,13 +703,18 @@ claim_service_spring_profiles() {
   compose exec -T claim-service printenv SPRING_PROFILES_ACTIVE 2>/dev/null || true
 }
 
+claim_service_compose_logs() {
+  compose logs claim-service 2>/dev/null || true
+}
+
 claim_service_demo_seeder_started() {
-  compose logs claim-service 2>/dev/null | grep -qF "${DEMO_SEEDER_LOG_MARKER}"
+  grep -qF "${DEMO_SEEDER_LOG_MARKER}" <<< "$(claim_service_compose_logs)" 2>/dev/null
 }
 
 claim_service_demo_seeder_log_count() {
-  local count
-  count="$(compose logs claim-service 2>/dev/null | grep -cF "${DEMO_SEEDER_LOG_MARKER}" || true)"
+  local logs count
+  logs="$(claim_service_compose_logs)"
+  count="$(grep -cF "${DEMO_SEEDER_LOG_MARKER}" <<< "$logs" 2>/dev/null || true)"
   if [[ "$count" =~ ^[0-9]+$ ]]; then
     printf '%s' "$count"
   else
@@ -963,7 +997,9 @@ check_04_flyway_and_empty_portal_without_demo() {
     emit_result "$nn" FAIL "$name" "expected non-demo stack but claim-service SPRING_PROFILES_ACTIVE=${active_profiles:-<empty>}"
     return
   fi
-  if compose logs claim-service 2>/dev/null | grep -qE 'Successfully applied|Schema .* is up to date|Flyway.*success'; then
+  local claim_service_logs
+  claim_service_logs="$(claim_service_compose_logs)"
+  if grep -qE 'Successfully applied|Schema .* is up to date|Flyway.*success' <<< "$claim_service_logs" 2>/dev/null; then
     logs_ok=true
   fi
   flyway_count="$(compose exec -T postgres psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -tAc \
