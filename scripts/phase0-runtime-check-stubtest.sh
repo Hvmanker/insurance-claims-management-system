@@ -189,6 +189,7 @@ export PATH="${STUB_BIN}:${PATH}"
 export COMPOSE_PROJECT=phase0check
 PHASE0_STOPPED_PROJECTS=()
 PHASE0_USED_PROJECTS=()
+PHASE0_CREATED_PROJECTS=()
 PHASE0_ACTIVE_COMPOSE_PROJECT=""
 p_startup="$(phase0_compose_project_for_phase startup)"
 if [[ ! "$p_startup" =~ ^phase0check-[0-9]{8}T[0-9]{6}Z-startup$ ]]; then
@@ -217,7 +218,15 @@ if [[ "$stop_count" -lt 2 ]]; then
   exit 1
 fi
 
-echo "stub: PHASE0_NO_TEARDOWN guard accepts phase0check- prefix"
+echo "stub: PHASE0_NO_TEARDOWN does not stop projects outside allowlist"
+: >"$DOCKER_STUB_LOG"
+phase0_compose_stop_project "phase0check-not-created-this-run"
+if grep -q 'phase0check-not-created-this-run' "$DOCKER_STUB_LOG"; then
+  echo "FAIL: must not stop projects not created this run" >&2
+  exit 1
+fi
+
+echo "stub: PHASE0_NO_TEARDOWN guard accepts phase0check- suffix"
 set +e
 ( unset PHASE0_NO_TEARDOWN; export COMPOSE_PROJECT=phase0check-extra; require_compose_project_guard ) 2>/dev/null
 bad_rc=$?

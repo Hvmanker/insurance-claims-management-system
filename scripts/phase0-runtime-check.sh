@@ -56,9 +56,20 @@ HTTP_WAIT_STATUS_REPORT=""
 PHASE0_ACTIVE_COMPOSE_PROJECT=""
 declare -a PHASE0_STOPPED_PROJECTS=()
 declare -a PHASE0_USED_PROJECTS=()
+declare -a PHASE0_CREATED_PROJECTS=()
 
 phase0_no_teardown_enabled() {
   [[ "${PHASE0_NO_TEARDOWN:-}" == "1" ]]
+}
+
+# COMPOSE_PROJECT: exactly phase0check, or phase0check-<suffix> only with PHASE0_NO_TEARDOWN=1.
+phase0_compose_project_name_valid() {
+  local cp="$1"
+  [[ "$cp" =~ ^phase0check(-[0-9A-Za-z-]+)?$ ]] || return 1
+  if [[ "$cp" == "${REQUIRED_COMPOSE_PROJECT}" ]]; then
+    return 0
+  fi
+  phase0_no_teardown_enabled
 }
 
 phase0_register_tmp() {
@@ -116,15 +127,12 @@ emit_result() {
 
 require_compose_project_guard() {
   local cp="${COMPOSE_PROJECT:-}"
-  if [[ "$cp" == "${REQUIRED_COMPOSE_PROJECT}" ]]; then
-    return 0
-  fi
-  if phase0_no_teardown_enabled && [[ "$cp" == "${REQUIRED_COMPOSE_PROJECT}-"* ]]; then
+  if phase0_compose_project_name_valid "$cp"; then
     return 0
   fi
   if phase0_no_teardown_enabled; then
-    printf 'COMPOSE_PROJECT must be exactly %q or start with %q- (got %q); refusing to run.\n' \
-      "$REQUIRED_COMPOSE_PROJECT" "$REQUIRED_COMPOSE_PROJECT" "${cp:-<unset>}" >&2
+    printf 'COMPOSE_PROJECT must match ^phase0check(-[0-9A-Za-z-]+)?$ (got %q); refusing to run.\n' \
+      "${cp:-<unset>}" >&2
   else
     printf 'COMPOSE_PROJECT must be exactly %q (got %q); refusing to run.\n' \
       "$REQUIRED_COMPOSE_PROJECT" "${cp:-<unset>}" >&2
@@ -212,8 +220,11 @@ load_env_from_dotenv() {
 }
 
 compose() {
-  local project="${PHASE0_ACTIVE_COMPOSE_PROJECT:-$COMPOSE_PROJECT}"
-  docker compose -p "$project" --env-file "${REPO_ROOT}/.env" "$@"
+  if phase0_no_teardown_enabled; then
+    docker compose -p "${PHASE0_ACTIVE_COMPOSE_PROJECT}" --env-file "${REPO_ROOT}/.env" "$@"
+  else
+    docker compose -p "${COMPOSE_PROJECT}" --env-file "${REPO_ROOT}/.env" "$@"
+  fi
 }
 
 phase0_compose_project_for_phase() {
@@ -222,8 +233,44 @@ phase0_compose_project_for_phase() {
   printf '%s' "${COMPOSE_PROJECT}-${ts}-${phase}"
 }
 
+phase0_list_volumes_for_project() {
+  local project="$1"
+  docker volume ls -q --filter "label=com.docker.compose.project=${project}" 2>/dev/null || true
+}
+
+phase0_log_phase_compose_header() {
+  local phase_label="$1" vol
+  local -a vols=()
+  log_line "compose phase ${phase_label}: active project=${PHASE0_ACTIVE_COMPOSE_PROJECT}"
+  log_line "  volumes (label com.docker.compose.project=${PHASE0_ACTIVE_COMPOSE_PROJECT}):"
+  while IFS= read -r vol; do
+    [[ -n "$vol" ]] && vols+=("$vol")
+  done < <(phase0_list_volumes_for_project "${PHASE0_ACTIVE_COMPOSE_PROJECT}")
+  if ((${#vols[@]} == 0)); then
+    log_line "    (none yet)"
+  else
+    for vol in "${vols[@]}"; do
+      log_line "    ${vol}"
+    done
+  fi
+}
+
+phase0_compose_stop_is_allowed() {
+  local project="$1" p
+  if [[ "$project" == "${REQUIRED_COMPOSE_PROJECT}" ]]; then
+    return 0
+  fi
+  for p in ${PHASE0_CREATED_PROJECTS[@]+"${PHASE0_CREATED_PROJECTS[@]}"}; do
+    [[ "$p" == "$project" ]] && return 0
+  done
+  return 1
+}
+
 phase0_compose_stop_project() {
   local project="$1"
+  if ! phase0_compose_stop_is_allowed "$project"; then
+    return 0
+  fi
   log_line "compose stop (project=${project})"
   docker compose -p "$project" --env-file "${REPO_ROOT}/.env" stop >/dev/null 2>&1 || true
   PHASE0_STOPPED_PROJECTS+=("$project")
@@ -235,39 +282,30 @@ phase0_switch_compose_project() {
     phase0_compose_stop_project "$prev"
   fi
   PHASE0_ACTIVE_COMPOSE_PROJECT="$new_project"
+  PHASE0_CREATED_PROJECTS+=("$new_project")
   PHASE0_USED_PROJECTS+=("$new_project")
   log_line "compose project active: ${PHASE0_ACTIVE_COMPOSE_PROJECT}"
-}
-
-phase0_compose_down_v() {
-  if phase0_no_teardown_enabled; then
-    log_line "PHASE0_NO_TEARDOWN: skipping compose down -v"
-    return 0
-  fi
-  compose down -v
 }
 
 phase0_prepare_fresh_compose_stack() {
   local phase="$1"
   if phase0_no_teardown_enabled; then
     phase0_switch_compose_project "$(phase0_compose_project_for_phase "$phase")"
+    phase0_log_phase_compose_header "$phase"
   else
     compose down -v >/dev/null 2>&1 || true
   fi
 }
 
 phase0_log_no_teardown_closing_note() {
-  local f vol
+  local f p vol last="${PHASE0_ACTIVE_COMPOSE_PROJECT}"
   log_line "PHASE0_NO_TEARDOWN closing note:"
+  log_line "  stack left running: project=${last}"
+  log_line "  claim-service logs: docker compose -p ${last} logs claim-service"
   if ((${#PHASE0_STOPPED_PROJECTS[@]} > 0)); then
     log_line "  stopped compose projects: ${PHASE0_STOPPED_PROJECTS[*]}"
   else
     log_line "  stopped compose projects: (none recorded)"
-  fi
-  if ((${#PHASE0_USED_PROJECTS[@]} > 0)); then
-    log_line "  compose projects used this run: ${PHASE0_USED_PROJECTS[*]}"
-  else
-    log_line "  compose projects used this run: (none recorded)"
   fi
   if ((${#PHASE0_TMP_FILES[@]} > 0)); then
     log_line "  temporary files left on disk:"
@@ -275,10 +313,12 @@ phase0_log_no_teardown_closing_note() {
       log_line "    ${f}"
     done
   fi
-  log_line "  docker volumes left behind (name contains ${REQUIRED_COMPOSE_PROJECT}):"
-  while IFS= read -r vol; do
-    [[ -n "$vol" ]] && log_line "    ${vol}"
-  done < <(docker volume ls -q 2>/dev/null | grep -F "${REQUIRED_COMPOSE_PROJECT}" || true)
+  for p in ${PHASE0_CREATED_PROJECTS[@]+"${PHASE0_CREATED_PROJECTS[@]}"}; do
+    log_line "  volumes for project=${p}:"
+    while IFS= read -r vol; do
+      [[ -n "$vol" ]] && log_line "    ${vol}"
+    done < <(phase0_list_volumes_for_project "$p")
+  done
 }
 
 compose_with_profile() {
@@ -733,7 +773,11 @@ check_05_demo_sign_in_after_fresh_volume() {
     return
   fi
   if login_user "agent@insureflow.local" "${DEMO_AGENT_PASSWORD}" "$jar"; then
-    emit_result "$nn" PASS "$name" "agent@insureflow.local login HTTP 200 after down -v && up"
+    if phase0_no_teardown_enabled; then
+      emit_result "$nn" PASS "$name" "agent@insureflow.local login HTTP 200 on fresh project ${PHASE0_ACTIVE_COMPOSE_PROJECT}"
+    else
+      emit_result "$nn" PASS "$name" "agent@insureflow.local login HTTP 200 after down -v && up"
+    fi
   else
     log_http_failure "[05] agent@insureflow.local login" "${PHASE0_LAST_HTTP_CODE}"
     emit_result "$nn" FAIL "$name" "agent@insureflow.local login failed after fresh volume ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
@@ -967,13 +1011,13 @@ main() {
     log_line "PHASE0_NO_TEARDOWN=1: per-phase compose projects; skipping down/rm teardown"
     phase0_compose_stop_project "${REQUIRED_COMPOSE_PROJECT}"
     phase0_switch_compose_project "$(phase0_compose_project_for_phase startup)"
+    phase0_log_phase_compose_header "startup"
+    log_line "compose up -d --build (project=${PHASE0_ACTIVE_COMPOSE_PROJECT})"
   else
-    PHASE0_ACTIVE_COMPOSE_PROJECT="${COMPOSE_PROJECT}"
     log_line "compose down -v (throwaway stack)"
-    phase0_compose_down_v
+    compose down -v
+    log_line "compose up -d --build"
   fi
-
-  log_line "compose up -d --build (project=${PHASE0_ACTIVE_COMPOSE_PROJECT})"
   compose up -d --build
 
   if ! wait_for_stack_ready; then
