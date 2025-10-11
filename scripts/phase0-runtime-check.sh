@@ -9,6 +9,9 @@ cd "$REPO_ROOT"
 readonly REQUIRED_COMPOSE_PROJECT="phase0check"
 readonly HEALTH_TIMEOUT_SEC="${PHASE0_HEALTH_TIMEOUT_SEC:-900}"
 readonly HTTP_TIMEOUT_SEC="${PHASE0_HTTP_TIMEOUT_SEC:-180}"
+readonly CHECK_05_READINESS_TIMEOUT_SEC="${PHASE0_CHECK_05_READINESS_TIMEOUT_SEC:-180}"
+readonly CHECK_05_DEMO_SEEDER_TIMEOUT_SEC="${PHASE0_CHECK_05_DEMO_SEEDER_TIMEOUT_SEC:-300}"
+readonly DEMO_SEEDER_EXPECTED_COUNT=9
 readonly BASE_URL="${PHASE0_BASE_URL:-http://localhost:8081}"
 readonly DEMO_SEEDER_LOG_MARKER='Demo portal user ready:'
 declare -a DEMO_PASSWORD_ENV_NAMES=()
@@ -51,6 +54,7 @@ declare -a SECRET_VALUES=()
 declare -a PHASE0_TMP_FILES=()
 PHASE0_CURL_BODY=""
 PHASE0_LAST_HTTP_CODE=""
+PHASE0_REGISTER_HTTP_CODE=""
 COMPOSE_PS_STATUS_REPORT=""
 HTTP_WAIT_STATUS_REPORT=""
 PHASE0_ACTIVE_COMPOSE_PROJECT=""
@@ -480,7 +484,7 @@ phase0_log_no_teardown_closing_note() {
   log_line "  stack left running: project=${last}"
   log_line "  claim-service logs: docker compose -p ${last} logs claim-service"
   if ((${#PHASE0_STOPPED_PROJECTS[@]} > 0)); then
-    log_line "  stopped compose projects: ${PHASE0_STOPPED_PROJECTS[*]}"
+    log_line "  stopped compose projects: ${PHASE0_STOPPED_PROJECTS[*]+"${PHASE0_STOPPED_PROJECTS[*]}"}"
   else
     log_line "  stopped compose projects: (none recorded)"
   fi
@@ -568,7 +572,7 @@ compose_ps_status_report() {
     parts+=("${svc}: state=${state} health=${health:-<empty>}")
   done <<< "$(compose_ps_lines)"
   local IFS='; '
-  printf '%s' "${parts[*]}"
+  printf '%s' "${parts[*]+"${parts[*]}"}"
 }
 
 compose_all_services_running_healthy() {
@@ -593,7 +597,7 @@ services_not_fully_healthy_list() {
     fi
   done <<< "$(compose_ps_lines)"
   local IFS=','
-  printf '%s' "${parts[*]}"
+  printf '%s' "${parts[*]+"${parts[*]}"}"
 }
 
 # Full compose ps -a snapshot (every service state and health) for timeout diagnostics.
@@ -605,7 +609,7 @@ unhealthy_services() {
     parts+=("${svc}(state=${state},health=${health:-empty})")
   done <<< "$(compose_ps_lines)"
   local IFS=','
-  printf '%s' "${parts[*]}"
+  printf '%s' "${parts[*]+"${parts[*]}"}"
 }
 
 wait_for_compose_healthy() {
@@ -682,6 +686,69 @@ claim_service_demo_seeder_started() {
   compose logs claim-service 2>/dev/null | grep -qF "${DEMO_SEEDER_LOG_MARKER}"
 }
 
+claim_service_demo_seeder_log_count() {
+  local count
+  count="$(compose logs claim-service 2>/dev/null | grep -cF "${DEMO_SEEDER_LOG_MARKER}" || true)"
+  if [[ "$count" =~ ^[0-9]+$ ]]; then
+    printf '%s' "$count"
+  else
+    printf '%s' "0"
+  fi
+}
+
+actuator_body_is_up() {
+  local body="$1"
+  [[ "$body" == *'"status":"UP"'* ]] || [[ "$body" == *'"status": "UP"'* ]]
+}
+
+wait_for_check05_claim_service_readiness() {
+  local deadline=$((SECONDS + CHECK_05_READINESS_TIMEOUT_SEC))
+  local body code chunk tmp_body
+  local use_readiness=1 health_path
+  HTTP_WAIT_STATUS_REPORT=""
+  tmp_body="$(phase0_mktemp)"
+  while (( SECONDS < deadline )); do
+    if [[ "$use_readiness" -eq 1 ]]; then
+      health_path="${BASE_URL}/actuator/health/readiness"
+    else
+      health_path="${BASE_URL}/actuator/health"
+    fi
+    code="$(curl -sS -m 5 -o "$tmp_body" -w '%{http_code}' "${health_path}" 2>/dev/null)" || code=""
+    code="$(normalize_http_code "$code")"
+    PHASE0_LAST_HTTP_CODE="$code"
+    body="$(cat "$tmp_body" 2>/dev/null || true)"
+    if [[ "$use_readiness" -eq 1 && "$code" == "404" ]]; then
+      use_readiness=0
+      continue
+    fi
+    if actuator_body_is_up "$body"; then
+      return 0
+    fi
+    sleep 3
+  done
+  body="$(cat "$tmp_body" 2>/dev/null || true)"
+  chunk="$(printf '%s' "$body" | head -c 200 | tr '\n' ' ')"
+  HTTP_WAIT_STATUS_REPORT="check 05 readiness not UP within ${CHECK_05_READINESS_TIMEOUT_SEC}s; last HTTP ${PHASE0_LAST_HTTP_CODE}; body: $(mask_secrets "$chunk")"
+  log_line "ERROR: ${HTTP_WAIT_STATUS_REPORT}"
+  return 1
+}
+
+wait_for_demo_seeder_all_users() {
+  local deadline=$((SECONDS + CHECK_05_DEMO_SEEDER_TIMEOUT_SEC)) count
+  while (( SECONDS < deadline )); do
+    count="$(claim_service_demo_seeder_log_count)"
+    if [[ "$count" -ge "${DEMO_SEEDER_EXPECTED_COUNT}" ]]; then
+      log_line "[05] demo seeder log lines=${count} (expected ${DEMO_SEEDER_EXPECTED_COUNT})"
+      return 0
+    fi
+    sleep 3
+  done
+  count="$(claim_service_demo_seeder_log_count)"
+  HTTP_WAIT_STATUS_REPORT="demo seeder: expected ${DEMO_SEEDER_EXPECTED_COUNT} log lines with ${DEMO_SEEDER_LOG_MARKER}, got ${count} within ${CHECK_05_DEMO_SEEDER_TIMEOUT_SEC}s"
+  log_line "ERROR: ${HTTP_WAIT_STATUS_REPORT}"
+  return 1
+}
+
 curl_json() {
   local method="$1" url="$2" jar="$3" body="${4:-}"
   local -a extra=(-sS -o "${PHASE0_CURL_BODY}" -w '%{http_code}' -X "$method" -b "$jar" -c "$jar")
@@ -734,6 +801,7 @@ register_insured() {
   local body code
   body="$(printf '{"fullName":"%s","email":"%s","password":"%s"}' "$full_name" "$email" "$password")"
   code="$(curl_json POST "${BASE_URL}/api/auth/register" "$jar" "$body")"
+  PHASE0_REGISTER_HTTP_CODE="$code"
   [[ "$code" == "201" || "$code" == "200" ]]
 }
 
@@ -930,17 +998,26 @@ check_05_demo_sign_in_after_fresh_volume() {
     emit_result "$nn" FAIL "$name" "compose up with demo profile failed"
     return
   fi
-  if ! wait_for_stack_ready; then
+  if ! wait_for_compose_healthy; then
     emit_result "$nn" FAIL "$name" "demo stack not ready: ${COMPOSE_PS_STATUS_REPORT}"
     return
   fi
-  local active_profiles seeder_found=false
+  if ! wait_for_check05_claim_service_readiness; then
+    emit_result "$nn" FAIL "$name" "demo stack readiness: ${HTTP_WAIT_STATUS_REPORT}"
+    return
+  fi
+  if ! wait_for_demo_seeder_all_users; then
+    emit_result "$nn" FAIL "$name" "${HTTP_WAIT_STATUS_REPORT}"
+    return
+  fi
+  local active_profiles seeder_found=false seeder_count
   active_profiles="$(claim_service_spring_profiles)"
+  seeder_count="$(claim_service_demo_seeder_log_count)"
   if claim_service_demo_seeder_started; then
     seeder_found=true
   fi
   log_line "[05] claim-service SPRING_PROFILES_ACTIVE=${active_profiles:-<empty>}"
-  log_line "[05] DemoProfileSeeder log line found=${seeder_found}"
+  log_line "[05] DemoProfileSeeder log line count=${seeder_count}; grep marker found=${seeder_found}"
   if [[ "$active_profiles" != *demo* ]]; then
     emit_result "$nn" FAIL "$name" "claim-service SPRING_PROFILES_ACTIVE missing demo (got: ${active_profiles:-<empty>})"
     return
@@ -975,8 +1052,8 @@ check_06_live_cache_authorization_tm_a() {
   jar_agent="$(phase0_mktemp)"
 
   if ! register_insured "tm-a-insured-phase0-$(date +%s)@example.com" "${DEMO_INSURED_PASSWORD}" "TM-A Insured A" "$jar_a"; then
-    log_http_failure "[06] INSURED A registration" "${PHASE0_LAST_HTTP_CODE}"
-    emit_result "$nn" FAIL "$name" "INSURED A registration for check 06 failed ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
+    log_http_failure "[06] INSURED A registration" "${PHASE0_REGISTER_HTTP_CODE}"
+    emit_result "$nn" FAIL "$name" "INSURED A registration for check 06 failed (HTTP ${PHASE0_REGISTER_HTTP_CODE}; $(http_failure_appendix "${PHASE0_REGISTER_HTTP_CODE}"))"
     return
   fi
   if ! submit_claim_check_06 "$jar_a"; then

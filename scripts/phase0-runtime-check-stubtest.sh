@@ -10,7 +10,31 @@ PHASE0_STUB_ORIGINAL_PATH="${PATH}"
 export PHASE0_ORIGINAL_PATH="${PHASE0_STUB_ORIGINAL_PATH}"
 
 STUB_BIN="$(mktemp -d)"
-trap 'rm -rf "$STUB_BIN"' EXIT
+STUB_DOCKER_LOG=""
+
+phase0_stub_cleanup_on_exit() {
+  if phase0_no_teardown_enabled; then
+    printf 'PHASE0_NO_TEARDOWN stub: leaving STUB_BIN=%s on disk\n' "$STUB_BIN" >&2
+    if [[ -n "$STUB_DOCKER_LOG" && -f "$STUB_DOCKER_LOG" ]]; then
+      printf 'PHASE0_NO_TEARDOWN stub: leaving DOCKER_STUB_LOG=%s on disk\n' "$STUB_DOCKER_LOG" >&2
+    fi
+    return 0
+  fi
+  rm -rf "$STUB_BIN"
+  if [[ -n "$STUB_DOCKER_LOG" && -f "$STUB_DOCKER_LOG" ]]; then
+    rm -f "$STUB_DOCKER_LOG"
+  fi
+}
+
+trap phase0_stub_cleanup_on_exit EXIT
+
+# True when a logged docker compose line uses down/rm as whole-word subcommands (not inside paths).
+phase0_stub_compose_log_has_forbidden_teardown() {
+  local log_file="$1"
+  grep -qE '(^|[[:space:]])down([[:space:]]|$)' "$log_file" && return 0
+  grep -qE '(^|[[:space:]])rm([[:space:]]|$)' "$log_file" && return 0
+  return 1
+}
 
 cat > "${STUB_BIN}/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -52,6 +76,10 @@ chmod +x "${STUB_BIN}/curl"
 
 # shellcheck source=scripts/phase0-runtime-check.sh
 source "${REPO_ROOT}/scripts/phase0-runtime-check.sh"
+
+if [[ "${PHASE0_NO_TEARDOWN:-}" == "1" ]]; then
+  echo "stub: PHASE0_NO_TEARDOWN skips stubtest EXIT rm cleanup"
+fi
 
 echo "stub: empty PHASE0_TMP_FILES cleanup under set -u"
 PHASE0_TMP_FILES=()
@@ -228,7 +256,8 @@ else
 fi
 
 echo "stub: PHASE0_NO_TEARDOWN compose project names and stop-before-up"
-DOCKER_STUB_LOG="$(mktemp)"
+STUB_DOCKER_LOG="$(mktemp)"
+DOCKER_STUB_LOG="$STUB_DOCKER_LOG"
 export DOCKER_STUB_LOG
 cat > "${STUB_BIN}/docker" <<'DOCKERSTUB'
 #!/usr/bin/env bash
@@ -256,13 +285,30 @@ if ! grep -qE 'compose -p phase0check .* stop' "$DOCKER_STUB_LOG"; then
   echo "FAIL: expected compose stop before fresh stack" >&2
   exit 1
 fi
-if grep -qE 'compose.*(down|rm)' "$DOCKER_STUB_LOG"; then
-  echo "FAIL: PHASE0_NO_TEARDOWN must not invoke compose down or rm" >&2
+printf '%s\n' 'docker compose -p /home/himankverma/project stop' >>"$DOCKER_STUB_LOG"
+if phase0_stub_compose_log_has_forbidden_teardown "$DOCKER_STUB_LOG"; then
+  echo "FAIL: down/rm detector must not match substrings inside paths (himankverma)" >&2
   exit 1
 fi
-stop_count="$(grep -c 'compose -p .* stop' "$DOCKER_STUB_LOG" || true)"
-if [[ "$stop_count" -lt 2 ]]; then
-  echo "FAIL: expected at least two compose stop calls, got ${stop_count}" >&2
+printf '%s\n' 'docker compose -p phase0check down -v' >>"$DOCKER_STUB_LOG"
+if ! phase0_stub_compose_log_has_forbidden_teardown "$DOCKER_STUB_LOG"; then
+  echo "FAIL: down/rm detector must match compose down subcommand" >&2
+  exit 1
+fi
+: >"$DOCKER_STUB_LOG"
+phase0_prepare_fresh_compose_stack "c05"
+if phase0_stub_compose_log_has_forbidden_teardown "$DOCKER_STUB_LOG"; then
+  echo "FAIL: PHASE0_NO_TEARDOWN must not invoke compose down or rm (c05)" >&2
+  exit 1
+fi
+phase0_prepare_fresh_compose_stack "c04"
+if phase0_stub_compose_log_has_forbidden_teardown "$DOCKER_STUB_LOG"; then
+  echo "FAIL: PHASE0_NO_TEARDOWN must not invoke compose down or rm (c04)" >&2
+  exit 1
+fi
+stop_count="$(grep -cE 'docker compose -p .* stop' "$DOCKER_STUB_LOG" || true)"
+if [[ "$stop_count" -lt 1 ]]; then
+  echo "FAIL: expected compose stop when switching no-teardown phases, got ${stop_count}" >&2
   exit 1
 fi
 

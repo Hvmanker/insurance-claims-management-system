@@ -136,9 +136,9 @@ export COMPOSE_PROJECT=phase0check
 ./scripts/phase0-runtime-check.sh
 ```
 
-Copy `.env` from `.env.example` and configure secrets first. When the `demo` profile is enabled in `.env`, every `DEMO_*_PASSWORD` referenced by persona fixtures must be set before the script starts Docker.
+Copy `.env` from `.env.example` and configure secrets first. When the `demo` profile is enabled in `.env`, every `DEMO_*_PASSWORD` referenced by persona fixtures must be set (non-empty) before the script starts Docker; the gate does not validate password strength. Portal registration and the demo profile seeder both enforce the same rules: password length 12–72 characters, at least one uppercase letter, one lowercase letter, and one digit (`RegisterRequest` in claim-service).
 
-Docker-less smoke tests for shared helpers:
+Docker-less smoke tests for shared helpers accept `PHASE0_ALLOW_SKIP=1` when the real `docker compose` CLI is not installed; without it, the stub test fails fast.
 
 ```bash
 bash scripts/phase0-runtime-check-stubtest.sh
