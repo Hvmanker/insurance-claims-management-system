@@ -6,6 +6,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 export COMPOSE_PROJECT=phase0check
+PHASE0_STUB_ORIGINAL_PATH="${PATH}"
+export PHASE0_ORIGINAL_PATH="${PHASE0_STUB_ORIGINAL_PATH}"
 
 STUB_BIN="$(mktemp -d)"
 trap 'rm -rf "$STUB_BIN"' EXIT
@@ -192,23 +194,38 @@ if [[ "$p_startup" != phase0check-20261011t120000z-startup ]] \
   echo "FAIL: startup/c04/c05 must share one timestamp prefix" >&2
   exit 1
 fi
-_system_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-_real_docker=""
-if PATH="${_system_path}" command -v docker >/dev/null 2>&1 \
-  && PATH="${_system_path}" docker compose version >/dev/null 2>&1; then
-  _real_docker="$(PATH="${_system_path}" command -v docker)"
+bad_name_upper="phase0check-20261011T183536Z-startup"
+if phase0_runtime_compose_project_name_valid "$bad_name_upper"; then
+  echo "FAIL: uppercase project name must be rejected by runtime regex" >&2
+  exit 1
 fi
-if [[ -n "$_real_docker" ]]; then
-  export PHASE0_DOCKER_BIN="${_real_docker}"
+
+export PHASE0_COMPOSE_CONFIG_ENV_FILE="${REPO_ROOT}/.env.example"
+if ! phase0_resolve_compose_executable; then
+  if [[ "${PHASE0_ALLOW_SKIP:-}" == "1" ]]; then
+    echo "SKIP: real docker compose CLI not available; config -q name validation not run (this is not a pass)"
+  else
+    echo "FAIL: real docker compose CLI required for stub test (set PHASE0_ALLOW_SKIP=1 to skip)" >&2
+    exit 1
+  fi
+else
+  export PHASE0_DOCKER_BIN="${PHASE0_RESOLVED_COMPOSE_BIN}"
   for pn in "$p_startup" "$p_c04" "$p_c05"; do
     if ! phase0_validate_suffixed_compose_project_name "$pn" >/dev/null; then
       echo "FAIL: real docker compose config -q rejected valid name ${pn}" >&2
       exit 1
     fi
   done
-  echo "stub: real docker compose config -q validation ran for startup, c04, c05"
-else
-  echo "SKIP: real docker compose CLI not available; config -q name validation not run"
+  echo "real docker compose config -q validation ran for startup, c04, c05"
+  echo "stub: compose CLI rejects uppercase project name (compose-only check)"
+  set +e
+  phase0_validate_compose_project_name_compose_only "$bad_name_upper" >/dev/null 2>&1
+  compose_upper_rc=$?
+  set -e
+  if [[ "$compose_upper_rc" -ne 2 ]]; then
+    echo "FAIL: compose-only uppercase validation should return 2, got ${compose_upper_rc}" >&2
+    exit 1
+  fi
 fi
 
 echo "stub: PHASE0_NO_TEARDOWN compose project names and stop-before-up"
@@ -247,26 +264,6 @@ fi
 stop_count="$(grep -c 'compose -p .* stop' "$DOCKER_STUB_LOG" || true)"
 if [[ "$stop_count" -lt 2 ]]; then
   echo "FAIL: expected at least two compose stop calls, got ${stop_count}" >&2
-  exit 1
-fi
-
-echo "stub: invalid uppercase compose project name exits 2 before any stop"
-PHASE0_STOPPED_PROJECTS=()
-: >"$DOCKER_STUB_LOG"
-set +e
-phase0_validate_suffixed_compose_project_name "phase0check-20261011T183536Z-startup" >/dev/null 2>&1
-upper_rc=$?
-set -e
-if [[ "$upper_rc" -ne 2 ]]; then
-  echo "FAIL: uppercase project name should exit validation with status 2, got ${upper_rc}" >&2
-  exit 1
-fi
-if ((${#PHASE0_STOPPED_PROJECTS[@]} != 0)); then
-  echo "FAIL: uppercase validation must not record stopped projects" >&2
-  exit 1
-fi
-if grep -qE 'compose -p .* stop' "$DOCKER_STUB_LOG"; then
-  echo "FAIL: uppercase validation must not invoke compose stop" >&2
   exit 1
 fi
 

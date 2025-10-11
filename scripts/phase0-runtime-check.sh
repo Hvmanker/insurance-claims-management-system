@@ -61,6 +61,8 @@ PHASE0_COMPOSE_RUN_TS=""
 PHASE0_PROJECT_STARTUP=""
 PHASE0_PROJECT_C04=""
 PHASE0_PROJECT_C05=""
+PHASE0_RESOLVED_COMPOSE_BIN=""
+phase0_compose_use_standalone=0
 
 phase0_no_teardown_enabled() {
   [[ "${PHASE0_NO_TEARDOWN:-}" == "1" ]]
@@ -82,8 +84,99 @@ phase0_runtime_compose_project_name_valid() {
   [[ "$name" =~ ^phase0check(-[0-9a-z_-]+)+$ ]]
 }
 
+phase0_compose_config_env_file() {
+  if [[ -n "${PHASE0_COMPOSE_CONFIG_ENV_FILE:-}" ]]; then
+    printf '%s' "${PHASE0_COMPOSE_CONFIG_ENV_FILE}"
+  else
+    printf '%s' "${REPO_ROOT}/.env"
+  fi
+}
+
+phase0_fixed_compose_search_path() {
+  printf '%s' "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+}
+
+phase0_compose_cli_sanity_check() {
+  local bin="$1" out
+  [[ -n "$bin" && -x "$bin" ]] || return 1
+  if [[ "$(basename "$bin")" == "docker-compose" ]]; then
+    out="$("$bin" version 2>&1)" || return 1
+  else
+    out="$("$bin" compose version 2>&1)" || return 1
+  fi
+  [[ "$out" =~ [0-9] ]]
+}
+
+phase0_try_compose_candidate() {
+  local bin="$1"
+  if [[ -z "$bin" || ! -x "$bin" ]]; then
+    return 1
+  fi
+  if ! phase0_compose_cli_sanity_check "$bin"; then
+    return 1
+  fi
+  if [[ "$(basename "$bin")" == "docker-compose" ]]; then
+    PHASE0_RESOLVED_COMPOSE_BIN="$bin"
+    phase0_compose_use_standalone=1
+    return 0
+  fi
+  PHASE0_RESOLVED_COMPOSE_BIN="$bin"
+  phase0_compose_use_standalone=0
+  return 0
+}
+
+# Resolve docker compose CLI: PHASE0_DOCKER_BIN, then ORIGINAL PATH docker / docker-compose, then fixed dirs.
+phase0_resolve_compose_executable() {
+  local search_path="${PHASE0_ORIGINAL_PATH:-$PATH}"
+  local fixed_path bin
+
+  PHASE0_RESOLVED_COMPOSE_BIN=""
+  phase0_compose_use_standalone=0
+
+  if [[ -n "${PHASE0_DOCKER_BIN:-}" && -x "${PHASE0_DOCKER_BIN}" ]]; then
+    if phase0_try_compose_candidate "${PHASE0_DOCKER_BIN}"; then
+      return 0
+    fi
+  fi
+
+  bin="$(PATH="${search_path}" command -v docker 2>/dev/null || true)"
+  if phase0_try_compose_candidate "$bin"; then
+    return 0
+  fi
+
+  bin="$(PATH="${search_path}" command -v docker-compose 2>/dev/null || true)"
+  if phase0_try_compose_candidate "$bin"; then
+    return 0
+  fi
+
+  fixed_path="$(phase0_fixed_compose_search_path)"
+  bin="$(PATH="${fixed_path}" command -v docker 2>/dev/null || true)"
+  if phase0_try_compose_candidate "$bin"; then
+    return 0
+  fi
+
+  bin="$(PATH="${fixed_path}" command -v docker-compose 2>/dev/null || true)"
+  if phase0_try_compose_candidate "$bin"; then
+    return 0
+  fi
+
+  return 1
+}
+
+phase0_run_compose_config_q() {
+  local project="$1" env_file="${2:-$(phase0_compose_config_env_file)}"
+  if [[ -z "${PHASE0_RESOLVED_COMPOSE_BIN}" ]] && ! phase0_resolve_compose_executable; then
+    return 127
+  fi
+  if [[ "${phase0_compose_use_standalone}" -eq 1 ]]; then
+    "${PHASE0_RESOLVED_COMPOSE_BIN}" -p "$project" --env-file "$env_file" config -q
+  else
+    "${PHASE0_RESOLVED_COMPOSE_BIN}" compose -p "$project" --env-file "$env_file" config -q
+  fi
+}
+
 phase0_validate_suffixed_compose_project_name() {
-  local name="$1" err rc docker_bin="${PHASE0_DOCKER_BIN:-docker}"
+  local name="$1" err rc
   if [[ "$name" == "${REQUIRED_COMPOSE_PROJECT}" ]]; then
     return 0
   fi
@@ -91,12 +184,37 @@ phase0_validate_suffixed_compose_project_name() {
     printf 'compose project name %q does not match ^phase0check(-[0-9a-z_-]+)+$\n' "$name" >&2
     return 2
   fi
+  if ! phase0_resolve_compose_executable; then
+    printf 'compose rejected project name: docker compose CLI not found\n' >&2
+    return 2
+  fi
   set +e
-  err="$("$docker_bin" compose -p "$name" --env-file "${REPO_ROOT}/.env" config -q 2>&1)"
+  err="$(phase0_run_compose_config_q "$name" "$(phase0_compose_config_env_file)" 2>&1)"
   rc=$?
   set -e
   if [[ "$rc" -ne 0 ]]; then
-    printf '%s\n' "$err" >&2
+    printf 'compose rejected project name: %s\n' "$err" >&2
+    return 2
+  fi
+  return 0
+}
+
+# Compose config -q only (no regex); for asserting compose rejects invalid project names.
+phase0_validate_compose_project_name_compose_only() {
+  local name="$1" err rc
+  if [[ "$name" == "${REQUIRED_COMPOSE_PROJECT}" ]]; then
+    return 0
+  fi
+  if ! phase0_resolve_compose_executable; then
+    printf 'compose rejected project name: docker compose CLI not found\n' >&2
+    return 2
+  fi
+  set +e
+  err="$(phase0_run_compose_config_q "$name" "$(phase0_compose_config_env_file)" 2>&1)"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    printf 'compose rejected project name: %s\n' "$err" >&2
     return 2
   fi
   return 0
