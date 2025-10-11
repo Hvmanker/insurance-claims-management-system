@@ -264,11 +264,23 @@ register_insured() {
   [[ "$code" == "201" || "$code" == "200" ]]
 }
 
+readonly CHECK_06_CLAIM_AMOUNT="1500.00"
+
 submit_claim() {
   local jar="$1" amount="$2"
   local body code
   body="$(printf '{"policyNumber":"POL-PHASE0-%s","claimType":"AUTO","reason":"Phase0 runtime gate","description":"Automated runtime check claim","estimatedAmount":%s}' \
     "$(date +%s)" "$amount")"
+  code="$(curl_json POST "${BASE_URL}/claims" "$jar" "$body")"
+  [[ "$code" == "201" ]]
+}
+
+# Check 06 only: new claim under 10k, not used by checks 01–05 (submit does not touch Redis; see ClaimService.submit).
+submit_claim_check_06() {
+  local jar="$1"
+  local body code
+  body="$(printf '{"policyNumber":"POL-PHASE0-TM-A-%s","claimType":"AUTO","reason":"Phase0 TM-A cache gate","description":"Check 06 dedicated claim","estimatedAmount":%s}' \
+    "$(date +%s%N)" "${CHECK_06_CLAIM_AMOUNT}")"
   code="$(curl_json POST "${BASE_URL}/claims" "$jar" "$body")"
   [[ "$code" == "201" ]]
 }
@@ -463,12 +475,12 @@ check_06_live_cache_authorization_tm_a() {
   jar_broker="$(phase0_mktemp)"
   jar_agent="$(phase0_mktemp)"
 
-  if ! login_user "insured@insureflow.local" "${DEMO_INSURED_PASSWORD}" "$jar_a"; then
-    emit_result "$nn" FAIL "$name" "insured A demo login failed"
+  if ! register_insured "tm-a-insured-phase0-$(date +%s)@example.com" "${DEMO_INSURED_PASSWORD}" "TM-A Insured A" "$jar_a"; then
+    emit_result "$nn" FAIL "$name" "INSURED A registration for check 06 failed"
     return
   fi
-  if ! submit_claim "$jar_a" "5000.00"; then
-    emit_result "$nn" FAIL "$name" "insured A claim submit failed"
+  if ! submit_claim_check_06 "$jar_a"; then
+    emit_result "$nn" FAIL "$name" "INSURED A claim submit failed (${CHECK_06_CLAIM_AMOUNT} under 10k authority)"
     return
   fi
   claim_id="$(claim_id_from_submit)"
@@ -525,15 +537,20 @@ check_06_live_cache_authorization_tm_a() {
   fi
   log_check_06_redis_scan "after-decide"
   if redis_scan_contains_claim_id "$claim_id"; then
-    emit_result "$nn" FAIL "$name" "after-decide: claims* key for claim still present after decide"
+    emit_result "$nn" FAIL "$name" "after-decide: claims* key for claim still present after decide (scan must run before AGENT re-read)"
     return
   fi
   status="$(claim_status "$jar_agent" "$claim_id" || true)"
   if [[ "$status" != "APPROVED" ]]; then
-    emit_result "$nn" FAIL "$name" "after-decide: AGENT GET status=${status:-unknown}, expected APPROVED"
+    emit_result "$nn" FAIL "$name" "after-reread: AGENT GET status=${status:-unknown}, expected APPROVED"
     return
   fi
-  emit_result "$nn" PASS "$name" "INSURED B and BROKER HTTP 404; Redis absent before read, present after read, absent after decide; status APPROVED"
+  log_check_06_redis_scan "after-reread"
+  if ! redis_scan_contains_claim_id "$claim_id"; then
+    emit_result "$nn" FAIL "$name" "after-reread: claims* key for claim missing after AGENT GET (CachedClaimReader should repopulate cache)"
+    return
+  fi
+  emit_result "$nn" PASS "$name" "INSURED B and BROKER HTTP 404; claim ${claim_id} Redis absent before read, present after read, absent after decide, present after re-read; status APPROVED (${CHECK_06_CLAIM_AMOUNT})"
 }
 
 check_07_tm_b_kafka_integration() {
