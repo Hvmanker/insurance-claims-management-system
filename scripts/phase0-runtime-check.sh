@@ -55,6 +55,8 @@ SKIP_COUNT=0
 declare -a SECRET_VALUES=()
 declare -a PHASE0_TMP_FILES=()
 PHASE0_CURL_BODY=""
+PHASE0_LAST_HTTP_CODE=""
+COMPOSE_PS_STATUS_REPORT=""
 
 phase0_register_tmp() {
   PHASE0_TMP_FILES+=("$1")
@@ -216,27 +218,58 @@ log_check_06_redis_scan() {
   fi
 }
 
+compose_ps_lines() {
+  compose ps -a --format '{{.Service}}\t{{.State}}\t{{.Health}}' 2>/dev/null || true
+}
+
+compose_ps_status_report() {
+  local svc state health
+  local -a parts=()
+  while IFS=$'\t' read -r svc state health; do
+    [[ -z "$svc" ]] && continue
+    parts+=("${svc}: state=${state} health=${health:-<empty>}")
+  done <<< "$(compose_ps_lines)"
+  local IFS='; '
+  printf '%s' "${parts[*]}"
+}
+
+compose_all_services_running_healthy() {
+  local svc state health saw_service=0
+  while IFS=$'\t' read -r svc state health; do
+    [[ -z "$svc" ]] && continue
+    saw_service=1
+    if [[ "$state" != "running" ]] || [[ "$health" != "healthy" ]]; then
+      return 1
+    fi
+  done <<< "$(compose_ps_lines)"
+  [[ "$saw_service" -eq 1 ]]
+}
+
 unhealthy_services() {
-  compose ps --format '{{.Service}}\t{{.Health}}\t{{.State}}' 2>/dev/null \
-    | awk -F'\t' '$3 == "running" && $2 != "" && $2 != "healthy" { print $1 }' \
-    | paste -sd, -
+  local svc state health
+  local -a parts=()
+  while IFS=$'\t' read -r svc state health; do
+    [[ -z "$svc" ]] && continue
+    if [[ "$state" != "running" ]] || [[ "$health" != "healthy" ]]; then
+      parts+=("${svc}(state=${state},health=${health:-empty})")
+    fi
+  done <<< "$(compose_ps_lines)"
+  local IFS=','
+  printf '%s' "${parts[*]}"
 }
 
 wait_for_compose_healthy() {
   local deadline=$((SECONDS + HEALTH_TIMEOUT_SEC))
-  local ps_out unhealthy
+  COMPOSE_PS_STATUS_REPORT=""
   while (( SECONDS < deadline )); do
-    ps_out="$(compose ps --format '{{.Service}}\t{{.Health}}\t{{.State}}' 2>/dev/null || true)"
-    if [[ -z "$ps_out" ]]; then
-      sleep 5
-      continue
-    fi
-    unhealthy="$(unhealthy_services)"
-    if [[ -z "$unhealthy" ]]; then
+    if compose_all_services_running_healthy; then
       return 0
     fi
     sleep 5
   done
+  COMPOSE_PS_STATUS_REPORT="$(compose_ps_status_report)"
+  log_line "ERROR: compose health wait timed out after ${HEALTH_TIMEOUT_SEC}s"
+  log_line "compose ps -a: ${COMPOSE_PS_STATUS_REPORT}"
   return 1
 }
 
@@ -252,7 +285,9 @@ normalize_http_code() {
 curl_http_code() {
   local code
   code="$(curl -sS -o /dev/null -w '%{http_code}' "$@" 2>/dev/null)" || code=""
-  normalize_http_code "$code"
+  code="$(normalize_http_code "$code")"
+  PHASE0_LAST_HTTP_CODE="$code"
+  printf '%s' "$code"
 }
 
 wait_for_claim_service_http() {
@@ -272,7 +307,12 @@ wait_for_stack_ready() {
   if ! wait_for_compose_healthy; then
     return 1
   fi
-  wait_for_claim_service_http
+  if ! wait_for_claim_service_http; then
+    COMPOSE_PS_STATUS_REPORT="claim-service /actuator/health not UP within ${CLAIM_HTTP_READY_TIMEOUT_SEC}s"
+    log_line "ERROR: ${COMPOSE_PS_STATUS_REPORT}"
+    return 1
+  fi
+  return 0
 }
 
 claim_service_spring_profiles() {
@@ -292,7 +332,25 @@ curl_json() {
   fi
   extra+=("$url")
   code="$(curl "${extra[@]}" 2>/dev/null)" || code=""
-  normalize_http_code "$code"
+  code="$(normalize_http_code "$code")"
+  PHASE0_LAST_HTTP_CODE="$code"
+  printf '%s' "$code"
+}
+
+log_http_response_body_truncated() {
+  local max=500 chunk
+  if [[ ! -f "${PHASE0_CURL_BODY}" ]]; then
+    log_line "response body: (none)"
+    return
+  fi
+  chunk="$(head -c "$max" "${PHASE0_CURL_BODY}" 2>/dev/null | tr '\n' ' ')"
+  log_line "response body: $(mask_secrets "$chunk")"
+}
+
+log_http_failure() {
+  local label="$1" code="$2"
+  log_line "${label}: HTTP ${code}"
+  log_http_response_body_truncated
 }
 
 login_user() {
@@ -428,7 +486,13 @@ check_02_host_port_exposure() {
     emit_result "$nn" FAIL "$name" "${fail_reasons[0]}"
     return
   fi
-  local evidence="compose port/ps: only claim-service:8081 published"
+  local http_code
+  http_code="$(curl_http_code "${BASE_URL}/actuator/health")"
+  if [[ "$http_code" == "000" ]]; then
+    emit_result "$nn" FAIL "$name" "compose port OK but claim-service HTTP on 8081 not reachable"
+    return
+  fi
+  local evidence="compose port: only claim-service:8081 published; HTTP 8081 reachable (actuator ${http_code})"
   if ((${#nc_notes[@]} > 0)); then
     evidence="${evidence}; ${nc_notes[*]}"
   elif [[ "$nc_available" -eq 0 ]]; then
@@ -458,7 +522,7 @@ check_04_flyway_and_empty_portal_without_demo() {
     return
   fi
   if ! wait_for_stack_ready; then
-    emit_result "$nn" FAIL "$name" "non-demo stack not healthy or claim-service HTTP not UP within timeouts"
+    emit_result "$nn" FAIL "$name" "non-demo stack not ready: ${COMPOSE_PS_STATUS_REPORT}"
     return
   fi
   local active_profiles
@@ -499,23 +563,29 @@ check_05_demo_sign_in_after_fresh_volume() {
     return
   fi
   if ! wait_for_stack_ready; then
-    emit_result "$nn" FAIL "$name" "demo stack not healthy or claim-service HTTP not UP within timeouts"
+    emit_result "$nn" FAIL "$name" "demo stack not ready: ${COMPOSE_PS_STATUS_REPORT}"
     return
   fi
-  local active_profiles
+  local active_profiles seeder_found=false
   active_profiles="$(claim_service_spring_profiles)"
+  if claim_service_demo_seeder_started; then
+    seeder_found=true
+  fi
+  log_line "[05] claim-service SPRING_PROFILES_ACTIVE=${active_profiles:-<empty>}"
+  log_line "[05] DemoProfileSeeder log line found=${seeder_found}"
   if [[ "$active_profiles" != *demo* ]]; then
     emit_result "$nn" FAIL "$name" "claim-service SPRING_PROFILES_ACTIVE missing demo (got: ${active_profiles:-<empty>})"
     return
   fi
-  if ! claim_service_demo_seeder_started; then
+  if [[ "$seeder_found" != true ]]; then
     emit_result "$nn" FAIL "$name" "claim-service logs missing DemoProfileSeeder line (${DEMO_SEEDER_LOG_MARKER}…)"
     return
   fi
   if login_user "agent@insureflow.local" "${DEMO_AGENT_PASSWORD}" "$jar"; then
     emit_result "$nn" PASS "$name" "agent@insureflow.local login HTTP 200 after down -v && up"
   else
-    emit_result "$nn" FAIL "$name" "agent@insureflow.local login failed after fresh volume"
+    log_http_failure "[05] agent@insureflow.local login" "${PHASE0_LAST_HTTP_CODE}"
+    emit_result "$nn" FAIL "$name" "agent@insureflow.local login failed after fresh volume (HTTP ${PHASE0_LAST_HTTP_CODE})"
   fi
 }
 
@@ -533,7 +603,8 @@ check_06_live_cache_authorization_tm_a() {
   jar_agent="$(phase0_mktemp)"
 
   if ! register_insured "tm-a-insured-phase0-$(date +%s)@example.com" "${DEMO_INSURED_PASSWORD}" "TM-A Insured A" "$jar_a"; then
-    emit_result "$nn" FAIL "$name" "INSURED A registration for check 06 failed"
+    log_http_failure "[06] INSURED A registration" "${PHASE0_LAST_HTTP_CODE}"
+    emit_result "$nn" FAIL "$name" "INSURED A registration for check 06 failed (HTTP ${PHASE0_LAST_HTTP_CODE})"
     return
   fi
   if ! submit_claim_check_06 "$jar_a"; then
@@ -647,7 +718,8 @@ check_13_tm_d_high_value_manual_decide() {
   jar_agent="$(phase0_mktemp)"
 
   if ! login_user "insured@insureflow.local" "${DEMO_INSURED_PASSWORD}" "$jar_insured"; then
-    emit_result "$nn" FAIL "$name" "insured demo login failed"
+    log_http_failure "[13] insured@insureflow.local login" "${PHASE0_LAST_HTTP_CODE}"
+    emit_result "$nn" FAIL "$name" "insured demo login failed (HTTP ${PHASE0_LAST_HTTP_CODE})"
     return
   fi
   if ! submit_claim "$jar_insured" "15000.00"; then
@@ -662,7 +734,8 @@ check_13_tm_d_high_value_manual_decide() {
     return
   fi
   if ! login_user "agent@insureflow.local" "${DEMO_AGENT_PASSWORD}" "$jar_agent"; then
-    emit_result "$nn" FAIL "$name" "legacy AGENT login failed"
+    log_http_failure "[13] agent@insureflow.local login" "${PHASE0_LAST_HTTP_CODE}"
+    emit_result "$nn" FAIL "$name" "legacy AGENT login failed (HTTP ${PHASE0_LAST_HTTP_CODE})"
     return
   fi
   code="$(curl_json POST "${BASE_URL}/claims/${claim_id}/decision" "$jar_agent" \
