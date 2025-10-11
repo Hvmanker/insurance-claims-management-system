@@ -8,7 +8,9 @@ cd "$REPO_ROOT"
 
 readonly REQUIRED_COMPOSE_PROJECT="phase0check"
 readonly HEALTH_TIMEOUT_SEC="${PHASE0_HEALTH_TIMEOUT_SEC:-900}"
+readonly CLAIM_HTTP_READY_TIMEOUT_SEC="${PHASE0_CLAIM_HTTP_READY_TIMEOUT_SEC:-180}"
 readonly BASE_URL="${PHASE0_BASE_URL:-http://localhost:8081}"
+readonly DEMO_SEEDER_LOG_MARKER='Demo portal user ready:'
 # DEMO_* names referenced by demo-profile gate checks (must exist in .env when demo is active).
 readonly SCRIPT_DEMO_ENV_VARS=(
   DEMO_AGENT_PASSWORD
@@ -67,7 +69,7 @@ phase0_mktemp() {
 
 phase0_cleanup_tmps() {
   local f
-  for f in "${PHASE0_TMP_FILES[@]}"; do
+  for f in ${PHASE0_TMP_FILES[@]+"${PHASE0_TMP_FILES[@]}"}; do
     rm -f "$f"
   done
 }
@@ -75,7 +77,7 @@ phase0_cleanup_tmps() {
 mask_secrets() {
   local text="$1"
   local secret
-  for secret in "${SECRET_VALUES[@]}"; do
+  for secret in ${SECRET_VALUES[@]+"${SECRET_VALUES[@]}"}; do
     [[ -z "$secret" ]] && continue
     text="${text//"$secret"/***REDACTED***}"
   done
@@ -238,14 +240,59 @@ wait_for_compose_healthy() {
   return 1
 }
 
+normalize_http_code() {
+  local code="$1"
+  if [[ "$code" =~ ^[0-9]{3}$ ]]; then
+    printf '%s' "$code"
+  else
+    printf '%s' "000"
+  fi
+}
+
+curl_http_code() {
+  local code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' "$@" 2>/dev/null)" || code=""
+  normalize_http_code "$code"
+}
+
+wait_for_claim_service_http() {
+  local deadline=$((SECONDS + CLAIM_HTTP_READY_TIMEOUT_SEC))
+  local body
+  while (( SECONDS < deadline )); do
+    body="$(curl -sS -m 5 "${BASE_URL}/actuator/health" 2>/dev/null || true)"
+    if [[ "$body" == *'"status":"UP"'* ]] || [[ "$body" == *'"status": "UP"'* ]]; then
+      return 0
+    fi
+    sleep 3
+  done
+  return 1
+}
+
+wait_for_stack_ready() {
+  if ! wait_for_compose_healthy; then
+    return 1
+  fi
+  wait_for_claim_service_http
+}
+
+claim_service_spring_profiles() {
+  compose exec -T claim-service printenv SPRING_PROFILES_ACTIVE 2>/dev/null || true
+}
+
+claim_service_demo_seeder_started() {
+  compose logs claim-service 2>/dev/null | grep -qF "${DEMO_SEEDER_LOG_MARKER}"
+}
+
 curl_json() {
   local method="$1" url="$2" jar="$3" body="${4:-}"
   local -a extra=(-sS -o "${PHASE0_CURL_BODY}" -w '%{http_code}' -X "$method" -b "$jar" -c "$jar")
+  local code
   if [[ -n "$body" ]]; then
     extra+=(-H 'Content-Type: application/json' -d "$body")
   fi
   extra+=("$url")
-  curl "${extra[@]}"
+  code="$(curl "${extra[@]}" 2>/dev/null)" || code=""
+  normalize_http_code "$code"
 }
 
 login_user() {
@@ -280,7 +327,7 @@ submit_claim_check_06() {
   local jar="$1"
   local body code
   body="$(printf '{"policyNumber":"POL-PHASE0-TM-A-%s","claimType":"AUTO","reason":"Phase0 TM-A cache gate","description":"Check 06 dedicated claim","estimatedAmount":%s}' \
-    "$(date +%s%N)" "${CHECK_06_CLAIM_AMOUNT}")"
+    "$(date +%s)-${RANDOM}" "${CHECK_06_CLAIM_AMOUNT}")"
   code="$(curl_json POST "${BASE_URL}/claims" "$jar" "$body")"
   [[ "$code" == "201" ]]
 }
@@ -351,7 +398,7 @@ check_02_host_port_exposure() {
     'settlement-service:8083'
     'notification-service:8084'
   )
-  local entry svc port mapping host_port skip_ports=() fail_reasons=()
+  local entry svc port mapping host_port nc_notes=() fail_reasons=()
   for entry in "${services_ports[@]}"; do
     svc="${entry%%:*}"
     port="${entry##*:}"
@@ -373,27 +420,21 @@ check_02_host_port_exposure() {
     fi
     if [[ "$nc_available" -eq 1 ]]; then
       if nc -z -w 2 localhost "$port" >/dev/null 2>&1; then
-        skip_ports+=("$port")
+        nc_notes+=("note: ${port} is open on the host by a non-stack process (compose port empty)")
       fi
     fi
   done
-  if ((${#skip_ports[@]} > 0)); then
-    emit_result "$nn" SKIPPED "$name" "host port(s) ${skip_ports[*]} open outside phase0check stack (nc succeeded, compose port empty)"
-    return
-  fi
   if ((${#fail_reasons[@]} > 0)); then
     emit_result "$nn" FAIL "$name" "${fail_reasons[0]}"
     return
   fi
-  if [[ "$nc_available" -eq 0 ]]; then
-    emit_result "$nn" PASS "$name" "compose port empty for internal services; claim-service:8081 mapped; nc unavailable for secondary probe"
-    return
+  local evidence="compose port/ps: only claim-service:8081 published"
+  if ((${#nc_notes[@]} > 0)); then
+    evidence="${evidence}; ${nc_notes[*]}"
+  elif [[ "$nc_available" -eq 0 ]]; then
+    evidence="${evidence}; nc unavailable for secondary probe"
   fi
-  if nc -z -w 2 localhost 8081 >/dev/null 2>&1; then
-    emit_result "$nn" PASS "$name" "compose port checks OK; nc confirms 8081 reachable; blocked ports not listening"
-    return
-  fi
-  emit_result "$nn" FAIL "$name" "compose port mapped 8081 but nc -z localhost 8081 failed"
+  emit_result "$nn" PASS "$name" "$evidence"
 }
 
 check_03_redis_noauth_without_password() {
@@ -416,8 +457,14 @@ check_04_flyway_and_empty_portal_without_demo() {
     emit_result "$nn" FAIL "$name" "compose up without demo profile failed"
     return
   fi
-  if ! wait_for_compose_healthy; then
-    emit_result "$nn" FAIL "$name" "stack did not become healthy within ${HEALTH_TIMEOUT_SEC}s (no demo profile)"
+  if ! wait_for_stack_ready; then
+    emit_result "$nn" FAIL "$name" "non-demo stack not healthy or claim-service HTTP not UP within timeouts"
+    return
+  fi
+  local active_profiles
+  active_profiles="$(claim_service_spring_profiles)"
+  if [[ "$active_profiles" == *demo* ]]; then
+    emit_result "$nn" FAIL "$name" "expected non-demo stack but claim-service SPRING_PROFILES_ACTIVE=${active_profiles:-<empty>}"
     return
   fi
   if compose logs claim-service 2>/dev/null | grep -qE 'Successfully applied|Schema .* is up to date|Flyway.*success'; then
@@ -428,11 +475,11 @@ check_04_flyway_and_empty_portal_without_demo() {
   portal_count="$(compose exec -T postgres psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -tAc \
     "SELECT COUNT(*) FROM claims.portal_users;" 2>/dev/null | tr -d '[:space:]' || echo -1)"
   if [[ "$flyway_count" =~ ^[0-9]+$ ]] && [[ "$flyway_count" -gt 0 ]] && [[ "$portal_count" == "0" ]]; then
-    emit_result "$nn" PASS "$name" "flyway_schema_history_claim_service has ${flyway_count} successful migration(s); portal_users count=0"
+    emit_result "$nn" PASS "$name" "non-demo stack; flyway_schema_history_claim_service has ${flyway_count} successful migration(s); portal_users count=0"
     return
   fi
   if [[ "$logs_ok" == true ]] && [[ "$portal_count" == "0" ]]; then
-    emit_result "$nn" PASS "$name" "claim-service Flyway logs OK; portal_users count=0"
+    emit_result "$nn" PASS "$name" "non-demo stack; claim-service Flyway logs OK; portal_users count=0"
     return
   fi
   emit_result "$nn" FAIL "$name" "flyway_rows=${flyway_count} portal_users=${portal_count} flyway_logs=${logs_ok}"
@@ -447,12 +494,22 @@ check_05_demo_sign_in_after_fresh_volume() {
     return
   fi
   compose down -v >/dev/null 2>&1 || true
-  if ! compose up -d --build >/dev/null 2>&1; then
+  if ! compose_with_profile "demo" up -d --build >/dev/null 2>&1; then
     emit_result "$nn" FAIL "$name" "compose up with demo profile failed"
     return
   fi
-  if ! wait_for_compose_healthy; then
-    emit_result "$nn" FAIL "$name" "stack did not become healthy within ${HEALTH_TIMEOUT_SEC}s (demo profile)"
+  if ! wait_for_stack_ready; then
+    emit_result "$nn" FAIL "$name" "demo stack not healthy or claim-service HTTP not UP within timeouts"
+    return
+  fi
+  local active_profiles
+  active_profiles="$(claim_service_spring_profiles)"
+  if [[ "$active_profiles" != *demo* ]]; then
+    emit_result "$nn" FAIL "$name" "claim-service SPRING_PROFILES_ACTIVE missing demo (got: ${active_profiles:-<empty>})"
+    return
+  fi
+  if ! claim_service_demo_seeder_started; then
+    emit_result "$nn" FAIL "$name" "claim-service logs missing DemoProfileSeeder line (${DEMO_SEEDER_LOG_MARKER}…)"
     return
   fi
   if login_user "agent@insureflow.local" "${DEMO_AGENT_PASSWORD}" "$jar"; then
@@ -570,7 +627,7 @@ check_12_readme_dashboard_url() {
     emit_result "$nn" FAIL "$name" "could not parse dashboard URL from README.md"
     return
   fi
-  code="$(curl -sS -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || echo 000)"
+  code="$(curl_http_code "$url")"
   if [[ "$code" == "200" ]]; then
     emit_result "$nn" PASS "$name" "GET ${url} returned HTTP 200"
   else
@@ -684,8 +741,8 @@ main() {
   log_line "compose up -d --build"
   compose up -d --build
 
-  if ! wait_for_compose_healthy; then
-    log_line "WARN: initial health wait timed out after ${HEALTH_TIMEOUT_SEC}s; running checks anyway"
+  if ! wait_for_stack_ready; then
+    log_line "WARN: initial stack readiness timed out (health and/or claim-service HTTP); running checks anyway"
   fi
 
   run_all_checks
