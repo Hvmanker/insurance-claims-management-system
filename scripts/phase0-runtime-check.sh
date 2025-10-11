@@ -704,24 +704,28 @@ actuator_body_is_up() {
 wait_for_check05_claim_service_readiness() {
   local deadline=$((SECONDS + CHECK_05_READINESS_TIMEOUT_SEC))
   local body code chunk tmp_body
-  local use_readiness=1 health_path
+  local use_readiness=1 health_path endpoint_label=""
   HTTP_WAIT_STATUS_REPORT=""
   tmp_body="$(phase0_mktemp)"
   while (( SECONDS < deadline )); do
     if [[ "$use_readiness" -eq 1 ]]; then
       health_path="${BASE_URL}/actuator/health/readiness"
+      endpoint_label="/actuator/health/readiness"
     else
       health_path="${BASE_URL}/actuator/health"
+      endpoint_label="/actuator/health"
     fi
     code="$(curl -sS -m 5 -o "$tmp_body" -w '%{http_code}' "${health_path}" 2>/dev/null)" || code=""
     code="$(normalize_http_code "$code")"
     PHASE0_LAST_HTTP_CODE="$code"
     body="$(cat "$tmp_body" 2>/dev/null || true)"
     if [[ "$use_readiness" -eq 1 && "$code" == "404" ]]; then
+      log_line "[05] /actuator/health/readiness returned HTTP 404; falling back to /actuator/health"
       use_readiness=0
       continue
     fi
     if actuator_body_is_up "$body"; then
+      log_line "[05] claim-service health poll succeeded via ${endpoint_label} (HTTP ${code})"
       return 0
     fi
     sleep 3
