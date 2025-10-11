@@ -8,7 +8,7 @@ cd "$REPO_ROOT"
 
 readonly REQUIRED_COMPOSE_PROJECT="phase0check"
 readonly HEALTH_TIMEOUT_SEC="${PHASE0_HEALTH_TIMEOUT_SEC:-900}"
-readonly CLAIM_HTTP_READY_TIMEOUT_SEC="${PHASE0_CLAIM_HTTP_READY_TIMEOUT_SEC:-180}"
+readonly HTTP_TIMEOUT_SEC="${PHASE0_HTTP_TIMEOUT_SEC:-180}"
 readonly BASE_URL="${PHASE0_BASE_URL:-http://localhost:8081}"
 readonly DEMO_SEEDER_LOG_MARKER='Demo portal user ready:'
 # DEMO_* names referenced by demo-profile gate checks (must exist in .env when demo is active).
@@ -57,6 +57,7 @@ declare -a PHASE0_TMP_FILES=()
 PHASE0_CURL_BODY=""
 PHASE0_LAST_HTTP_CODE=""
 COMPOSE_PS_STATUS_REPORT=""
+HTTP_WAIT_STATUS_REPORT=""
 
 phase0_register_tmp() {
   PHASE0_TMP_FILES+=("$1")
@@ -245,7 +246,7 @@ compose_all_services_running_healthy() {
   [[ "$saw_service" -eq 1 ]]
 }
 
-unhealthy_services() {
+services_not_fully_healthy_list() {
   local svc state health
   local -a parts=()
   while IFS=$'\t' read -r svc state health; do
@@ -253,6 +254,18 @@ unhealthy_services() {
     if [[ "$state" != "running" ]] || [[ "$health" != "healthy" ]]; then
       parts+=("${svc}(state=${state},health=${health:-empty})")
     fi
+  done <<< "$(compose_ps_lines)"
+  local IFS=','
+  printf '%s' "${parts[*]}"
+}
+
+# Full compose ps -a snapshot (every service state and health) for timeout diagnostics.
+unhealthy_services() {
+  local svc state health
+  local -a parts=()
+  while IFS=$'\t' read -r svc state health; do
+    [[ -z "$svc" ]] && continue
+    parts+=("${svc}(state=${state},health=${health:-empty})")
   done <<< "$(compose_ps_lines)"
   local IFS=','
   printf '%s' "${parts[*]}"
@@ -267,9 +280,9 @@ wait_for_compose_healthy() {
     fi
     sleep 5
   done
-  COMPOSE_PS_STATUS_REPORT="$(compose_ps_status_report)"
+  COMPOSE_PS_STATUS_REPORT="$(unhealthy_services)"
   log_line "ERROR: compose health wait timed out after ${HEALTH_TIMEOUT_SEC}s"
-  log_line "compose ps -a: ${COMPOSE_PS_STATUS_REPORT}"
+  log_line "unhealthy_services: ${COMPOSE_PS_STATUS_REPORT}"
   return 1
 }
 
@@ -291,25 +304,34 @@ curl_http_code() {
 }
 
 wait_for_claim_service_http() {
-  local deadline=$((SECONDS + CLAIM_HTTP_READY_TIMEOUT_SEC))
-  local body
+  local deadline=$((SECONDS + HTTP_TIMEOUT_SEC))
+  local body code chunk tmp_body
+  HTTP_WAIT_STATUS_REPORT=""
+  tmp_body="$(phase0_mktemp)"
   while (( SECONDS < deadline )); do
-    body="$(curl -sS -m 5 "${BASE_URL}/actuator/health" 2>/dev/null || true)"
+    code="$(curl -sS -m 5 -o "$tmp_body" -w '%{http_code}' "${BASE_URL}/actuator/health" 2>/dev/null)" || code=""
+    code="$(normalize_http_code "$code")"
+    PHASE0_LAST_HTTP_CODE="$code"
+    body="$(cat "$tmp_body" 2>/dev/null || true)"
     if [[ "$body" == *'"status":"UP"'* ]] || [[ "$body" == *'"status": "UP"'* ]]; then
       return 0
     fi
     sleep 3
   done
+  body="$(cat "$tmp_body" 2>/dev/null || true)"
+  chunk="$(printf '%s' "$body" | head -c 200 | tr '\n' ' ')"
+  HTTP_WAIT_STATUS_REPORT="actuator/health not UP within ${HTTP_TIMEOUT_SEC}s; last HTTP ${PHASE0_LAST_HTTP_CODE}; body: $(mask_secrets "$chunk")"
+  log_line "ERROR: ${HTTP_WAIT_STATUS_REPORT}"
   return 1
 }
 
 wait_for_stack_ready() {
+  HTTP_WAIT_STATUS_REPORT=""
   if ! wait_for_compose_healthy; then
     return 1
   fi
   if ! wait_for_claim_service_http; then
-    COMPOSE_PS_STATUS_REPORT="claim-service /actuator/health not UP within ${CLAIM_HTTP_READY_TIMEOUT_SEC}s"
-    log_line "ERROR: ${COMPOSE_PS_STATUS_REPORT}"
+    COMPOSE_PS_STATUS_REPORT="${HTTP_WAIT_STATUS_REPORT}"
     return 1
   fi
   return 0
@@ -427,7 +449,7 @@ readme_dashboard_url() {
 check_01_healthy_and_single_published_port() {
   local nn="$1" name="$2"
   local not_healthy published host_ports
-  not_healthy="$(unhealthy_services)"
+  not_healthy="$(services_not_fully_healthy_list)"
   if [[ -n "$not_healthy" ]]; then
     emit_result "$nn" FAIL "$name" "unhealthy or starting services: ${not_healthy}"
     return

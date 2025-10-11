@@ -21,8 +21,17 @@ for a in "${args[@]}"; do
   esac
 done
 if [[ "$url" == *'/actuator/health' ]]; then
-  if [[ " ${args[*]} " == *" -o "* ]]; then
-    : # body discarded
+  out_file=""
+  local_i=0
+  while (( local_i < ${#args[@]} )); do
+    if [[ "${args[local_i]}" == "-o" ]]; then
+      out_file="${args[local_i + 1]}"
+      break
+    fi
+    local_i=$((local_i + 1))
+  done
+  if [[ -n "$out_file" ]]; then
+    printf '%s' '{"status":"UP"}' > "$out_file"
   fi
   if [[ " ${args[*]} " == *" -w "* ]]; then
     printf '%s' '200'
