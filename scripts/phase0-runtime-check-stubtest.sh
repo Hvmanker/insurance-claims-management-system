@@ -357,10 +357,24 @@ if grep -q 'phase0check-not-created-this-run' "$DOCKER_STUB_LOG"; then
 fi
 
 echo "stub: PHASE0_NO_TEARDOWN guard accepts phase0check- suffix"
+saved_compose_project="${COMPOSE_PROJECT}"
+saved_no_teardown="${PHASE0_NO_TEARDOWN:-}"
 bad_rc=0
-PHASE0_NO_TEARDOWN= COMPOSE_PROJECT=phase0check-extra require_compose_project_guard 2>/dev/null || bad_rc=$?
+# Subshell isolates require_compose_project_guard exit 2 from killing the stub driver.
+# shellcheck disable=SC2030
+(
+  export COMPOSE_PROJECT=phase0check-extra
+  unset PHASE0_NO_TEARDOWN
+  require_compose_project_guard
+) 2>/dev/null || bad_rc=$?
 good_rc=0
 PHASE0_NO_TEARDOWN=1 COMPOSE_PROJECT=phase0check-extra require_compose_project_guard || good_rc=$?
+export COMPOSE_PROJECT="${saved_compose_project}"
+if [[ -n "$saved_no_teardown" ]]; then
+  export PHASE0_NO_TEARDOWN="${saved_no_teardown}"
+else
+  unset PHASE0_NO_TEARDOWN
+fi
 if [[ "$bad_rc" -eq 0 ]]; then
   echo "FAIL: phase0check-extra should fail guard without PHASE0_NO_TEARDOWN" >&2
   exit 1
@@ -370,8 +384,6 @@ if [[ "$good_rc" -ne 0 ]]; then
   exit 1
 fi
 
-unset PHASE0_NO_TEARDOWN
-export COMPOSE_PROJECT=phase0check
 rm -f "$DOCKER_STUB_LOG"
 
 echo "stub: all OK"
