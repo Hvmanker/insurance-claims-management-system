@@ -127,6 +127,31 @@ Claims at or below `AUTO_APPROVAL_LIMIT` are approved automatically and flow to 
 curl http://localhost:8081/actuator/health
 ```
 
+## Phase 0 runtime gate
+
+The Phase 0 throwaway gate script lives at `scripts/phase0-runtime-check.sh`. It only runs against a dedicated Compose project name:
+
+```bash
+export COMPOSE_PROJECT=phase0check
+./scripts/phase0-runtime-check.sh
+```
+
+Copy `.env` from `.env.example` and configure secrets first. When the `demo` profile is enabled in `.env`, every `DEMO_*_PASSWORD` referenced by persona fixtures must be set before the script starts Docker.
+
+Docker-less smoke tests for shared helpers:
+
+```bash
+bash scripts/phase0-runtime-check-stubtest.sh
+```
+
+**Opt-in: leave stacks and volumes for inspection (`PHASE0_NO_TEARDOWN=1`).** Default behaviour is unchanged: the script tears down the throwaway project with `compose down -v` and deletes temporary files on exit. When you set `PHASE0_NO_TEARDOWN=1`, it never runs `compose down`, `compose down -v`, `docker volume rm`, or `rm -f` on gate temp files (cleanup only logs paths left behind). Each major bring-up uses a fresh Compose project name `${COMPOSE_PROJECT}-<UTC timestamp>-<phase>` for the initial startup, check 04 (`c04`), and check 05 (`c05`), so those phases get isolated volumes. Before each new `up`, the script runs `compose stop` on the previous project (stop only) to free host port 8081; at startup it also stops a plain `phase0check` project if one is running. `COMPOSE_PROJECT` must still be exactly `phase0check`, or any name with the `phase0check-` prefix in this mode only. The log lists compose project names used, stopped projects, and Docker volumes left behind for manual cleanup.
+
+```bash
+export COMPOSE_PROJECT=phase0check
+export PHASE0_NO_TEARDOWN=1
+./scripts/phase0-runtime-check.sh
+```
+
 ## Continuous Integration
 
 GitHub Actions runs the approval-policy unit tests, compiles every Maven module on Java 21, and validates the complete Docker Compose build for each push and pull request.

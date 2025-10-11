@@ -53,6 +53,13 @@ PHASE0_CURL_BODY=""
 PHASE0_LAST_HTTP_CODE=""
 COMPOSE_PS_STATUS_REPORT=""
 HTTP_WAIT_STATUS_REPORT=""
+PHASE0_ACTIVE_COMPOSE_PROJECT=""
+declare -a PHASE0_STOPPED_PROJECTS=()
+declare -a PHASE0_USED_PROJECTS=()
+
+phase0_no_teardown_enabled() {
+  [[ "${PHASE0_NO_TEARDOWN:-}" == "1" ]]
+}
 
 phase0_register_tmp() {
   PHASE0_TMP_FILES+=("$1")
@@ -67,6 +74,15 @@ phase0_mktemp() {
 
 phase0_cleanup_tmps() {
   local f
+  if phase0_no_teardown_enabled; then
+    if ((${#PHASE0_TMP_FILES[@]} > 0)); then
+      log_line "PHASE0_NO_TEARDOWN: leaving temporary files on disk:"
+      for f in ${PHASE0_TMP_FILES[@]+"${PHASE0_TMP_FILES[@]}"}; do
+        log_line "  ${f}"
+      done
+    fi
+    return 0
+  fi
   for f in ${PHASE0_TMP_FILES[@]+"${PHASE0_TMP_FILES[@]}"}; do
     rm -f "$f"
   done
@@ -99,11 +115,21 @@ emit_result() {
 }
 
 require_compose_project_guard() {
-  if [[ "${COMPOSE_PROJECT:-}" != "${REQUIRED_COMPOSE_PROJECT}" ]]; then
-    printf 'COMPOSE_PROJECT must be exactly %q (got %q); refusing to run.\n' \
-      "$REQUIRED_COMPOSE_PROJECT" "${COMPOSE_PROJECT:-<unset>}" >&2
-    exit 2
+  local cp="${COMPOSE_PROJECT:-}"
+  if [[ "$cp" == "${REQUIRED_COMPOSE_PROJECT}" ]]; then
+    return 0
   fi
+  if phase0_no_teardown_enabled && [[ "$cp" == "${REQUIRED_COMPOSE_PROJECT}-"* ]]; then
+    return 0
+  fi
+  if phase0_no_teardown_enabled; then
+    printf 'COMPOSE_PROJECT must be exactly %q or start with %q- (got %q); refusing to run.\n' \
+      "$REQUIRED_COMPOSE_PROJECT" "$REQUIRED_COMPOSE_PROJECT" "${cp:-<unset>}" >&2
+  else
+    printf 'COMPOSE_PROJECT must be exactly %q (got %q); refusing to run.\n' \
+      "$REQUIRED_COMPOSE_PROJECT" "${cp:-<unset>}" >&2
+  fi
+  exit 2
 }
 
 require_env_file() {
@@ -139,8 +165,8 @@ collect_demo_password_env_names_from_fixtures() {
   done < <(
     for f in "${dir}"/*.json; do
       [[ -f "$f" ]] || continue
-      grep -hoE '"passwordEnv"[[:space:]]*:[[:space:]]*"DEMO_[A-Z_]+_PASSWORD"' "$f" 2>/dev/null || true
-    done | grep -oE 'DEMO_[A-Z_]+_PASSWORD' | sort -u
+      grep '"passwordEnv"' "$f" 2>/dev/null || true
+    done | sed -En 's/.*"(DEMO_[A-Z_]+_PASSWORD)".*/\1/p' | sort -u
   )
   if ((${#DEMO_PASSWORD_ENV_NAMES[@]} == 0)); then
     printf 'No DEMO_* password env names found in persona fixtures under %s\n' "$dir" >&2
@@ -186,7 +212,73 @@ load_env_from_dotenv() {
 }
 
 compose() {
-  docker compose -p "$COMPOSE_PROJECT" --env-file "${REPO_ROOT}/.env" "$@"
+  local project="${PHASE0_ACTIVE_COMPOSE_PROJECT:-$COMPOSE_PROJECT}"
+  docker compose -p "$project" --env-file "${REPO_ROOT}/.env" "$@"
+}
+
+phase0_compose_project_for_phase() {
+  local phase="$1" ts
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  printf '%s' "${COMPOSE_PROJECT}-${ts}-${phase}"
+}
+
+phase0_compose_stop_project() {
+  local project="$1"
+  log_line "compose stop (project=${project})"
+  docker compose -p "$project" --env-file "${REPO_ROOT}/.env" stop >/dev/null 2>&1 || true
+  PHASE0_STOPPED_PROJECTS+=("$project")
+}
+
+phase0_switch_compose_project() {
+  local new_project="$1" prev="${PHASE0_ACTIVE_COMPOSE_PROJECT}"
+  if [[ -n "$prev" && "$prev" != "$new_project" ]]; then
+    phase0_compose_stop_project "$prev"
+  fi
+  PHASE0_ACTIVE_COMPOSE_PROJECT="$new_project"
+  PHASE0_USED_PROJECTS+=("$new_project")
+  log_line "compose project active: ${PHASE0_ACTIVE_COMPOSE_PROJECT}"
+}
+
+phase0_compose_down_v() {
+  if phase0_no_teardown_enabled; then
+    log_line "PHASE0_NO_TEARDOWN: skipping compose down -v"
+    return 0
+  fi
+  compose down -v
+}
+
+phase0_prepare_fresh_compose_stack() {
+  local phase="$1"
+  if phase0_no_teardown_enabled; then
+    phase0_switch_compose_project "$(phase0_compose_project_for_phase "$phase")"
+  else
+    compose down -v >/dev/null 2>&1 || true
+  fi
+}
+
+phase0_log_no_teardown_closing_note() {
+  local f vol
+  log_line "PHASE0_NO_TEARDOWN closing note:"
+  if ((${#PHASE0_STOPPED_PROJECTS[@]} > 0)); then
+    log_line "  stopped compose projects: ${PHASE0_STOPPED_PROJECTS[*]}"
+  else
+    log_line "  stopped compose projects: (none recorded)"
+  fi
+  if ((${#PHASE0_USED_PROJECTS[@]} > 0)); then
+    log_line "  compose projects used this run: ${PHASE0_USED_PROJECTS[*]}"
+  else
+    log_line "  compose projects used this run: (none recorded)"
+  fi
+  if ((${#PHASE0_TMP_FILES[@]} > 0)); then
+    log_line "  temporary files left on disk:"
+    for f in ${PHASE0_TMP_FILES[@]+"${PHASE0_TMP_FILES[@]}"}; do
+      log_line "    ${f}"
+    done
+  fi
+  log_line "  docker volumes left behind (name contains ${REQUIRED_COMPOSE_PROJECT}):"
+  while IFS= read -r vol; do
+    [[ -n "$vol" ]] && log_line "    ${vol}"
+  done < <(docker volume ls -q 2>/dev/null | grep -F "${REQUIRED_COMPOSE_PROJECT}" || true)
 }
 
 compose_with_profile() {
@@ -575,7 +667,7 @@ check_04_flyway_and_empty_portal_without_demo() {
   local nn="$1" name="$2"
   local flyway_count portal_count logs_ok=false
 
-  compose down -v >/dev/null 2>&1 || true
+  phase0_prepare_fresh_compose_stack "c04"
   if ! compose_with_profile "" up -d --build >/dev/null 2>&1; then
     emit_result "$nn" FAIL "$name" "compose up without demo profile failed"
     return
@@ -616,7 +708,7 @@ check_05_demo_sign_in_after_fresh_volume() {
     emit_result "$nn" SKIPPED "$name" "SPRING_PROFILES_ACTIVE in .env does not include demo"
     return
   fi
-  compose down -v >/dev/null 2>&1 || true
+  phase0_prepare_fresh_compose_stack "c05"
   if ! compose_with_profile "demo" up -d --build >/dev/null 2>&1; then
     emit_result "$nn" FAIL "$name" "compose up with demo profile failed"
     return
@@ -870,10 +962,18 @@ main() {
   log_repo_git_state
   log_line "repo=${REPO_ROOT} COMPOSE_PROJECT=${COMPOSE_PROJECT}"
 
-  log_line "compose down -v (throwaway stack)"
-  compose down -v
+  if phase0_no_teardown_enabled; then
+    PHASE0_ACTIVE_COMPOSE_PROJECT=""
+    log_line "PHASE0_NO_TEARDOWN=1: per-phase compose projects; skipping down/rm teardown"
+    phase0_compose_stop_project "${REQUIRED_COMPOSE_PROJECT}"
+    phase0_switch_compose_project "$(phase0_compose_project_for_phase startup)"
+  else
+    PHASE0_ACTIVE_COMPOSE_PROJECT="${COMPOSE_PROJECT}"
+    log_line "compose down -v (throwaway stack)"
+    phase0_compose_down_v
+  fi
 
-  log_line "compose up -d --build"
+  log_line "compose up -d --build (project=${PHASE0_ACTIVE_COMPOSE_PROJECT})"
   compose up -d --build
 
   if ! wait_for_stack_ready; then
@@ -882,6 +982,9 @@ main() {
 
   run_all_checks
   print_summary
+  if phase0_no_teardown_enabled; then
+    phase0_log_no_teardown_closing_note
+  fi
 
   if [[ "$FAIL_COUNT" -eq 0 && "$SKIP_COUNT" -eq 0 && "$PASS_COUNT" -eq ${#CHECKS[@]} ]]; then
     exit 0

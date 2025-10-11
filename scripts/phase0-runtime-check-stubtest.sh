@@ -149,4 +149,92 @@ if [[ "$all_ok_rc" -ne 0 ]]; then
   exit 1
 fi
 
+echo "stub: collect_demo_password_env_names uses portable sed -En extraction"
+collect_demo_password_env_names_from_fixtures "$(persona_fixtures_dir)"
+if ((${#DEMO_PASSWORD_ENV_NAMES[@]} != 9)); then
+  echo "FAIL: sed guard extraction expected 9 names, got ${#DEMO_PASSWORD_ENV_NAMES[@]}" >&2
+  exit 1
+fi
+
+echo "stub: PHASE0_NO_TEARDOWN leaves temp files and logs paths"
+export PHASE0_NO_TEARDOWN=1
+LOG_FILE="$(mktemp)"
+phase0_register_tmp "$LOG_FILE"
+left_tmp="$(mktemp)"
+phase0_register_tmp "$left_tmp"
+phase0_cleanup_tmps
+if [[ ! -f "$left_tmp" ]]; then
+  echo "FAIL: PHASE0_NO_TEARDOWN must not rm -f temp files" >&2
+  exit 1
+fi
+if ! grep -q "$left_tmp" "$LOG_FILE"; then
+  echo "FAIL: PHASE0_NO_TEARDOWN cleanup should log temp path" >&2
+  exit 1
+fi
+rm -f "$left_tmp" "$LOG_FILE"
+
+echo "stub: PHASE0_NO_TEARDOWN compose project names and stop-before-up"
+DOCKER_STUB_LOG="$(mktemp)"
+export DOCKER_STUB_LOG
+cat > "${STUB_BIN}/docker" <<'DOCKERSTUB'
+#!/usr/bin/env bash
+printf '%s\n' "docker $*" >> "${DOCKER_STUB_LOG}"
+if [[ "${1:-}" == "compose" && "${2:-}" == "-p" ]]; then
+  exit 0
+fi
+exit 0
+DOCKERSTUB
+chmod +x "${STUB_BIN}/docker"
+export PATH="${STUB_BIN}:${PATH}"
+export COMPOSE_PROJECT=phase0check
+PHASE0_STOPPED_PROJECTS=()
+PHASE0_USED_PROJECTS=()
+PHASE0_ACTIVE_COMPOSE_PROJECT=""
+p_startup="$(phase0_compose_project_for_phase startup)"
+if [[ ! "$p_startup" =~ ^phase0check-[0-9]{8}T[0-9]{6}Z-startup$ ]]; then
+  echo "FAIL: startup project name ${p_startup}" >&2
+  exit 1
+fi
+phase0_compose_stop_project "${REQUIRED_COMPOSE_PROJECT}"
+phase0_switch_compose_project "$p_startup"
+p_c04="$(phase0_compose_project_for_phase c04)"
+if [[ ! "$p_c04" =~ ^phase0check-[0-9]{8}T[0-9]{6}Z-c04$ ]]; then
+  echo "FAIL: c04 project name ${p_c04}" >&2
+  exit 1
+fi
+phase0_prepare_fresh_compose_stack "c04"
+if ! grep -qE 'compose -p phase0check .* stop' "$DOCKER_STUB_LOG"; then
+  echo "FAIL: expected compose stop before fresh stack" >&2
+  exit 1
+fi
+if grep -qE 'compose.*(down|rm)' "$DOCKER_STUB_LOG"; then
+  echo "FAIL: PHASE0_NO_TEARDOWN must not invoke compose down or rm" >&2
+  exit 1
+fi
+stop_count="$(grep -c 'compose -p .* stop' "$DOCKER_STUB_LOG" || true)"
+if [[ "$stop_count" -lt 2 ]]; then
+  echo "FAIL: expected at least two compose stop calls, got ${stop_count}" >&2
+  exit 1
+fi
+
+echo "stub: PHASE0_NO_TEARDOWN guard accepts phase0check- prefix"
+set +e
+( unset PHASE0_NO_TEARDOWN; export COMPOSE_PROJECT=phase0check-extra; require_compose_project_guard ) 2>/dev/null
+bad_rc=$?
+( export PHASE0_NO_TEARDOWN=1; export COMPOSE_PROJECT=phase0check-extra; require_compose_project_guard )
+good_rc=$?
+set -e
+if [[ "$bad_rc" -eq 0 ]]; then
+  echo "FAIL: phase0check-extra should fail guard without PHASE0_NO_TEARDOWN" >&2
+  exit 1
+fi
+if [[ "$good_rc" -ne 0 ]]; then
+  echo "FAIL: phase0check-extra should pass guard with PHASE0_NO_TEARDOWN=1" >&2
+  exit 1
+fi
+
+unset PHASE0_NO_TEARDOWN
+export COMPOSE_PROJECT=phase0check
+rm -f "$DOCKER_STUB_LOG"
+
 echo "stub: all OK"
