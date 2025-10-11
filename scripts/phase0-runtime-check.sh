@@ -17,7 +17,8 @@ readonly SCRIPT_DEMO_ENV_VARS=(
 )
 
 # Ordered gate checks (reorder to match Verifier list).
-# Format: NN|display name|function
+# Format: NN|display name|handler|stub_skip_reason
+# Use handler "." with stub_skip_reason for checks run inline in run_all_checks (08–11, 14–15).
 CHECKS=(
   '01|Every service is healthy after `up`, and `docker compose ps` shows 8081 as the only published port.|check_01_healthy_and_single_published_port'
   '02|From the host, 5432, 6379, 9092, 8082, 8083 and 8084 aren'\''t reachable, and 8081 is. Make the main test `docker compose -p phase0check port <service> <port>`, which must return empty for every service except claim-service:8081. Use `nc -z` only as a secondary check. If a host port is occupied by something OUTSIDE the stack (the compose port check is empty but nc succeeds), report SKIPPED with the port named, not FAIL.|check_02_host_port_exposure'
@@ -26,14 +27,20 @@ CHECKS=(
   '05|After `down -v && up` with the demo profile on, the demo password from the env file signs in.|check_05_demo_sign_in_after_fresh_volume'
   '06|With the real Redis cache (password on), INSURED B and BROKER get 404 after AGENT warms the cache, and `decide` evicts the entry. Do this live via curl.|check_06_live_cache_authorization_tm_a'
   '07|TM-B, the notification log-leak test, passes against a real Kafka consumer. If there'\''s no such integration test, report SKIPPED with the reason. Never count a unit-only run as a PASS here.|check_07_tm_b_kafka_integration'
-  '08|A claim.decided that is delivered late, arriving before claim.submitted, is handled correctly.|check_08_late_claim_decided_e2e'
-  '09|A duplicate eventId doesn'\''t cause a second payout.|check_09_duplicate_event_id_e2e'
-  '10|The 5200.00 vs 5180.00 amount mismatch is flagged in reconciliation.|check_10_amount_mismatch_reconciliation'
-  '11|A read between `decide` and its commit doesn'\''t put the stale status back into the cache. Without a test hook that pauses between decide and the commit, always report SKIPPED with that reason. No timing-based PASS.|check_11_decide_commit_cache_race'
-  '12|The README URL works from a clean clone.|check_12_readme_dashboard_url'
-  '13|TM-D: a claim over 10k stays SUBMITTED and the legacy AGENT decides it, run on the live stack.|check_13_tm_d_high_value_manual_decide'
-  '14|no stale com.sunil-typed messages on Kafka topics after rename (topics emptied/recreated)|check_14_kafka_topics_empty_after_up'
-  '15|Redis claims cache flushed on deploy after rename|check_15_redis_claims_cache_empty_after_up'
+  '08|A claim.decided that is delivered late, arriving before claim.submitted, is handled correctly.|.|consumers not yet on the contract envelope (1A)'
+  '09|A duplicate eventId doesn'\''t cause a second payout.|.|consumers not yet on the contract envelope (1A)'
+  '10|The 5200.00 vs 5180.00 amount mismatch is flagged in reconciliation.|.|consumers not yet on the contract envelope (1A)'
+  '11|A read between `decide` and its commit doesn'\''t put the stale status back into the cache. Without a test hook that pauses between decide and the commit, always report SKIPPED with that reason. No timing-based PASS.|.|no hook to pause between decide and its commit'
+  '12|The README URL works from a clean clone.|check_12_readme_dashboard_url|'
+  '13|TM-D: a claim over 10k stays SUBMITTED and the legacy AGENT decides it, run on the live stack.|check_13_tm_d_high_value_manual_decide|'
+  # Checks 14–15: never PASS on the default `down -v` then `up` path — empty Kafka/Redis is
+  # guaranteed and would be a false green. A real upgrade test must: (1) start a pre-rename
+  # image stack, warm Redis with a cached claim entry, and publish at least one legacy
+  # com.sunil-typed Kafka event; (2) run the documented topic reset / Redis claims flush;
+  # (3) deploy new images and verify they start, serve a claim read, and consume new events
+  # without deserialization errors.
+  '14|no stale com.sunil-typed messages on Kafka topics after rename (topics emptied/recreated)|.|upgrade path not exercised'
+  '15|Redis claims cache flushed on deploy after rename|.|upgrade path not exercised'
 )
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -44,6 +51,26 @@ FAIL_COUNT=0
 SKIP_COUNT=0
 
 declare -a SECRET_VALUES=()
+declare -a PHASE0_TMP_FILES=()
+PHASE0_CURL_BODY=""
+
+phase0_register_tmp() {
+  PHASE0_TMP_FILES+=("$1")
+}
+
+phase0_mktemp() {
+  local tmp
+  tmp="$(mktemp)"
+  phase0_register_tmp "$tmp"
+  printf '%s' "$tmp"
+}
+
+phase0_cleanup_tmps() {
+  local f
+  for f in "${PHASE0_TMP_FILES[@]}"; do
+    rm -f "$f"
+  done
+}
 
 mask_secrets() {
   local text="$1"
@@ -69,14 +96,6 @@ emit_result() {
     FAIL) FAIL_COUNT=$((FAIL_COUNT + 1)) ;;
     SKIPPED) SKIP_COUNT=$((SKIP_COUNT + 1)) ;;
   esac
-}
-
-check_display_name() {
-  local index="$1"
-  local spec="${CHECKS[$index]}"
-  local name="${spec#*|}"
-  name="${name%%|check_*}"
-  printf '%s' "$name"
 }
 
 require_compose_project_guard() {
@@ -195,16 +214,22 @@ log_check_06_redis_scan() {
   fi
 }
 
+unhealthy_services() {
+  compose ps --format '{{.Service}}\t{{.Health}}\t{{.State}}' 2>/dev/null \
+    | awk -F'\t' '$3 == "running" && $2 != "" && $2 != "healthy" { print $1 }' \
+    | paste -sd, -
+}
+
 wait_for_compose_healthy() {
   local deadline=$((SECONDS + HEALTH_TIMEOUT_SEC))
   local ps_out unhealthy
   while (( SECONDS < deadline )); do
-    ps_out="$(compose ps --format '{{.Name}}\t{{.Health}}\t{{.State}}' 2>/dev/null || true)"
+    ps_out="$(compose ps --format '{{.Service}}\t{{.Health}}\t{{.State}}' 2>/dev/null || true)"
     if [[ -z "$ps_out" ]]; then
       sleep 5
       continue
     fi
-    unhealthy="$(printf '%s\n' "$ps_out" | awk -F'\t' '$3 == "running" && $2 != "" && $2 != "healthy" { print $1 }')"
+    unhealthy="$(unhealthy_services)"
     if [[ -z "$unhealthy" ]]; then
       return 0
     fi
@@ -215,17 +240,12 @@ wait_for_compose_healthy() {
 
 curl_json() {
   local method="$1" url="$2" jar="$3" body="${4:-}"
+  local -a extra=(-sS -o "${PHASE0_CURL_BODY}" -w '%{http_code}' -X "$method" -b "$jar" -c "$jar")
   if [[ -n "$body" ]]; then
-    curl -sS -o /tmp/phase0-curl-body.json -w '%{http_code}' \
-      -X "$method" "$url" \
-      -H 'Content-Type: application/json' \
-      -b "$jar" -c "$jar" \
-      -d "$body"
-  else
-    curl -sS -o /tmp/phase0-curl-body.json -w '%{http_code}' \
-      -X "$method" "$url" \
-      -b "$jar" -c "$jar"
+    extra+=(-H 'Content-Type: application/json' -d "$body")
   fi
+  extra+=("$url")
+  curl "${extra[@]}"
 }
 
 login_user() {
@@ -260,11 +280,11 @@ claim_status() {
   if [[ "$code" != "200" ]]; then
     return 1
   fi
-  python3 -c 'import json,sys; print(json.load(open("/tmp/phase0-curl-body.json"))["status"])' 2>/dev/null
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "${PHASE0_CURL_BODY}" 2>/dev/null
 }
 
 claim_id_from_submit() {
-  python3 -c 'import json; print(json.load(open("/tmp/phase0-curl-body.json"))["id"])' 2>/dev/null
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "${PHASE0_CURL_BODY}" 2>/dev/null
 }
 
 has_tm_b_kafka_integration_test() {
@@ -288,12 +308,9 @@ readme_dashboard_url() {
 }
 
 check_01_healthy_and_single_published_port() {
-  local nn="01" name
-  name="$(check_display_name 0)"
-  local ps_out not_healthy published host_ports
-  ps_out="$(compose ps 2>/dev/null || true)"
-  not_healthy="$(compose ps --format '{{.Service}}\t{{.Health}}\t{{.State}}' 2>/dev/null \
-    | awk -F'\t' '$3 == "running" && $2 != "" && $2 != "healthy" { print $1 }' | paste -sd, -)"
+  local nn="$1" name="$2"
+  local not_healthy published host_ports
+  not_healthy="$(unhealthy_services)"
   if [[ -n "$not_healthy" ]]; then
     emit_result "$nn" FAIL "$name" "unhealthy or starting services: ${not_healthy}"
     return
@@ -308,8 +325,11 @@ check_01_healthy_and_single_published_port() {
 }
 
 check_02_host_port_exposure() {
-  local nn="02" name
-  name="$(check_display_name 1)"
+  local nn="$1" name="$2"
+  local nc_available=0
+  if command -v nc >/dev/null 2>&1; then
+    nc_available=1
+  fi
   local -a services_ports=(
     'postgres:5432'
     'redis:6379'
@@ -339,7 +359,7 @@ check_02_host_port_exposure() {
       fail_reasons+=("${svc}:${port} compose port returned ${mapping}")
       continue
     fi
-    if command -v nc >/dev/null 2>&1; then
+    if [[ "$nc_available" -eq 1 ]]; then
       if nc -z -w 2 localhost "$port" >/dev/null 2>&1; then
         skip_ports+=("$port")
       fi
@@ -353,7 +373,7 @@ check_02_host_port_exposure() {
     emit_result "$nn" FAIL "$name" "${fail_reasons[0]}"
     return
   fi
-  if ! command -v nc >/dev/null 2>&1; then
+  if [[ "$nc_available" -eq 0 ]]; then
     emit_result "$nn" PASS "$name" "compose port empty for internal services; claim-service:8081 mapped; nc unavailable for secondary probe"
     return
   fi
@@ -365,8 +385,7 @@ check_02_host_port_exposure() {
 }
 
 check_03_redis_noauth_without_password() {
-  local nn="03" name
-  name="$(check_display_name 2)"
+  local nn="$1" name="$2"
   local out
   out="$(compose exec -T redis redis-cli ping 2>&1 || true)"
   if [[ "$out" == *NOAUTH* ]]; then
@@ -377,8 +396,7 @@ check_03_redis_noauth_without_password() {
 }
 
 check_04_flyway_and_empty_portal_without_demo() {
-  local nn="04" name
-  name="$(check_display_name 3)"
+  local nn="$1" name="$2"
   local flyway_count portal_count logs_ok=false
 
   compose down -v >/dev/null 2>&1 || true
@@ -409,11 +427,10 @@ check_04_flyway_and_empty_portal_without_demo() {
 }
 
 check_05_demo_sign_in_after_fresh_volume() {
-  local nn="05" name jar
-  name="$(check_display_name 4)"
-  jar="$(mktemp)"
+  local nn="$1" name="$2" jar
+  jar="$(phase0_mktemp)"
 
-  if [[ "${SPRING_PROFILES_ACTIVE:-}" != *demo* ]]; then
+  if ! demo_profile_enabled; then
     emit_result "$nn" SKIPPED "$name" "SPRING_PROFILES_ACTIVE in .env does not include demo"
     return
   fi
@@ -434,15 +451,17 @@ check_05_demo_sign_in_after_fresh_volume() {
 }
 
 check_06_live_cache_authorization_tm_a() {
-  local nn="06" name
-  name="$(check_display_name 5)"
+  local nn="$1" name="$2"
   local jar_a jar_b jar_broker jar_agent claim_id code status
 
-  if [[ "${SPRING_PROFILES_ACTIVE:-}" != *demo* ]]; then
+  if ! demo_profile_enabled; then
     emit_result "$nn" SKIPPED "$name" "demo profile required for seeded AGENT and BROKER users"
     return
   fi
-  jar_a="$(mktemp)"; jar_b="$(mktemp)"; jar_broker="$(mktemp)"; jar_agent="$(mktemp)"
+  jar_a="$(phase0_mktemp)"
+  jar_b="$(phase0_mktemp)"
+  jar_broker="$(phase0_mktemp)"
+  jar_agent="$(phase0_mktemp)"
 
   if ! login_user "insured@insureflow.local" "${DEMO_INSURED_PASSWORD}" "$jar_a"; then
     emit_result "$nn" FAIL "$name" "insured A demo login failed"
@@ -518,8 +537,7 @@ check_06_live_cache_authorization_tm_a() {
 }
 
 check_07_tm_b_kafka_integration() {
-  local nn="07" name
-  name="$(check_display_name 6)"
+  local nn="$1" name="$2"
   if has_tm_b_kafka_integration_test; then
     emit_result "$nn" SKIPPED "$name" "Kafka TM-B test exists but isn't wired into this script"
     return
@@ -527,33 +545,8 @@ check_07_tm_b_kafka_integration() {
   emit_result "$nn" SKIPPED "$name" "no Kafka integration test for TM-B (unit-only WorkflowNotificationListenerLogLeakTest on main)"
 }
 
-check_08_late_claim_decided_e2e() {
-  local nn="08" name
-  name="$(check_display_name 7)"
-  emit_result "$nn" SKIPPED "$name" "consumers not yet on the contract envelope (1A)"
-}
-
-check_09_duplicate_event_id_e2e() {
-  local nn="09" name
-  name="$(check_display_name 8)"
-  emit_result "$nn" SKIPPED "$name" "consumers not yet on the contract envelope (1A)"
-}
-
-check_10_amount_mismatch_reconciliation() {
-  local nn="10" name
-  name="$(check_display_name 9)"
-  emit_result "$nn" SKIPPED "$name" "consumers not yet on the contract envelope (1A)"
-}
-
-check_11_decide_commit_cache_race() {
-  local nn="11" name
-  name="$(check_display_name 10)"
-  emit_result "$nn" SKIPPED "$name" "no hook to pause between decide and its commit"
-}
-
 check_12_readme_dashboard_url() {
-  local nn="12" name
-  name="$(check_display_name 11)"
+  local nn="$1" name="$2"
   local url code
   url="$(readme_dashboard_url)"
   if [[ -z "$url" ]]; then
@@ -569,15 +562,15 @@ check_12_readme_dashboard_url() {
 }
 
 check_13_tm_d_high_value_manual_decide() {
-  local nn="13" name
-  name="$(check_display_name 12)"
+  local nn="$1" name="$2"
   local jar_insured jar_agent claim_id status code
 
-  if [[ "${SPRING_PROFILES_ACTIVE:-}" != *demo* ]]; then
+  if ! demo_profile_enabled; then
     emit_result "$nn" SKIPPED "$name" "demo profile required for legacy AGENT user"
     return
   fi
-  jar_insured="$(mktemp)"; jar_agent="$(mktemp)"
+  jar_insured="$(phase0_mktemp)"
+  jar_agent="$(phase0_mktemp)"
 
   if ! login_user "insured@insureflow.local" "${DEMO_INSURED_PASSWORD}" "$jar_insured"; then
     emit_result "$nn" FAIL "$name" "insured demo login failed"
@@ -612,28 +605,11 @@ check_13_tm_d_high_value_manual_decide() {
   fi
 }
 
-# Checks 14–15: never PASS on the default `down -v` then `up` path — empty Kafka/Redis is
-# guaranteed and would be a false green. A real upgrade test must: (1) start a pre-rename
-# image stack, warm Redis with a cached claim entry, and publish at least one legacy
-# com.sunil-typed Kafka event; (2) run the documented topic reset / Redis claims flush;
-# (3) deploy new images and verify they start, serve a claim read, and consume new events
-# without deserialization errors.
-check_14_kafka_topics_empty_after_up() {
-  local nn="14" name
-  name="$(check_display_name 13)"
-  emit_result "$nn" SKIPPED "$name" "upgrade path not exercised"
-}
-
-check_15_redis_claims_cache_empty_after_up() {
-  local nn="15" name
-  name="$(check_display_name 14)"
-  emit_result "$nn" SKIPPED "$name" "upgrade path not exercised"
-}
-
 validate_checks_array_functions() {
   local spec fn missing=()
   for spec in "${CHECKS[@]}"; do
-    IFS='|' read -r _ _ fn <<< "$spec"
+    IFS='|' read -r _ _ fn _ <<< "$spec"
+    [[ "$fn" == "." ]] && continue
     if ! declare -f "$fn" >/dev/null 2>&1; then
       missing+=("$fn")
     fi
@@ -645,11 +621,15 @@ validate_checks_array_functions() {
 }
 
 run_all_checks() {
-  local spec fn
+  local spec nn display fn stub_reason
   for spec in "${CHECKS[@]}"; do
-    IFS='|' read -r _ _ fn <<< "$spec"
+    IFS='|' read -r nn display fn stub_reason <<< "$spec"
+    if [[ "$fn" == "." ]]; then
+      emit_result "$nn" SKIPPED "$display" "$stub_reason"
+      continue
+    fi
     set +e
-    "$fn"
+    "$fn" "$nn" "$display"
     set -e
   done
 }
@@ -659,9 +639,9 @@ print_summary() {
 }
 
 list_checks() {
-  local spec nn display _fn
+  local spec nn display _fn _stub
   for spec in "${CHECKS[@]}"; do
-    IFS='|' read -r nn display _fn <<< "$spec"
+    IFS='|' read -r nn display _fn _stub <<< "$spec"
     printf '%s\t%s\n' "$nn" "$display"
   done
 }
@@ -672,6 +652,9 @@ main() {
   load_env_from_dotenv
   require_demo_env_vars_when_enabled
   validate_checks_array_functions
+
+  PHASE0_CURL_BODY="$(phase0_mktemp)"
+  trap phase0_cleanup_tmps EXIT
 
   : > "$LOG_FILE"
   log_line "phase0-runtime-check starting at ${TIMESTAMP}"
@@ -697,9 +680,10 @@ main() {
   exit 1
 }
 
-if [[ "${1:-}" == "--list" ]]; then
-  list_checks
-  exit 0
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  if [[ "${1:-}" == "--list" ]]; then
+    list_checks
+    exit 0
+  fi
+  main "$@"
 fi
-
-main "$@"
