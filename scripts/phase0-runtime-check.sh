@@ -127,22 +127,21 @@ persona_fixtures_dir() {
 
 # Bash 3.2–safe: discover DEMO_* password env names from top-level persona JSON only.
 collect_demo_password_env_names_from_fixtures() {
-  local dir="$1" f line var tmp
+  local dir="$1" f var
   DEMO_PASSWORD_ENV_NAMES=()
   if [[ ! -d "$dir" ]]; then
     printf 'Missing demo persona fixtures directory: %s\n' "$dir" >&2
     return 2
   fi
-  tmp="$(mktemp)"
-  phase0_register_tmp "$tmp"
-  for f in "${dir}"/*.json; do
-    [[ -f "$f" ]] || continue
-    grep -hoE '"passwordEnv": *"DEMO_[A-Z_]+_PASSWORD"' "$f" 2>/dev/null >>"$tmp" || true
-  done
   while IFS= read -r var; do
     [[ -z "$var" ]] && continue
     DEMO_PASSWORD_ENV_NAMES+=("$var")
-  done < <(sed -n 's/.*"\(DEMO_[A-Z_]\+_PASSWORD\)".*/\1/p' "$tmp" | grep -E '^DEMO_[A-Z_]+_PASSWORD$' | sort -u)
+  done < <(
+    for f in "${dir}"/*.json; do
+      [[ -f "$f" ]] || continue
+      grep -hoE '"passwordEnv"[[:space:]]*:[[:space:]]*"DEMO_[A-Z_]+_PASSWORD"' "$f" 2>/dev/null || true
+    done | grep -oE 'DEMO_[A-Z_]+_PASSWORD' | sort -u
+  )
   if ((${#DEMO_PASSWORD_ENV_NAMES[@]} == 0)); then
     printf 'No DEMO_* password env names found in persona fixtures under %s\n' "$dir" >&2
     return 2
@@ -445,7 +444,7 @@ submit_claim_check_06() {
   local jar="$1"
   local body code
   body="$(printf '{"policyNumber":"POL-PHASE0-TM-A-%s","claimType":"AUTO","reason":"Phase0 TM-A cache gate","description":"Check 06 dedicated claim","estimatedAmount":%s}' \
-    "$(date +%s)-${RANDOM}" "${CHECK_06_CLAIM_AMOUNT}")"
+    "$(date +%s)-$$-${RANDOM}" "${CHECK_06_CLAIM_AMOUNT}")"
   code="$(curl_json POST "${BASE_URL}/claims" "$jar" "$body")"
   [[ "$code" == "201" ]]
 }
