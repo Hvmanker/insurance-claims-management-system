@@ -11,12 +11,7 @@ readonly HEALTH_TIMEOUT_SEC="${PHASE0_HEALTH_TIMEOUT_SEC:-900}"
 readonly HTTP_TIMEOUT_SEC="${PHASE0_HTTP_TIMEOUT_SEC:-180}"
 readonly BASE_URL="${PHASE0_BASE_URL:-http://localhost:8081}"
 readonly DEMO_SEEDER_LOG_MARKER='Demo portal user ready:'
-# DEMO_* names referenced by demo-profile gate checks (must exist in .env when demo is active).
-readonly SCRIPT_DEMO_ENV_VARS=(
-  DEMO_AGENT_PASSWORD
-  DEMO_INSURED_PASSWORD
-  DEMO_BROKER_PASSWORD
-)
+declare -a DEMO_PASSWORD_ENV_NAMES=()
 
 # Ordered gate checks (reorder to match Verifier list).
 # Format: NN|display name|handler|stub_skip_reason
@@ -122,12 +117,46 @@ demo_profile_enabled() {
   [[ "${SPRING_PROFILES_ACTIVE:-}" == *demo* ]]
 }
 
+persona_fixtures_dir() {
+  if [[ -n "${PHASE0_PERSONA_FIXTURES_DIR:-}" ]]; then
+    printf '%s' "${PHASE0_PERSONA_FIXTURES_DIR}"
+  else
+    printf '%s' "${REPO_ROOT}/claim-service/src/main/resources/fixtures/personas"
+  fi
+}
+
+# Bash 3.2–safe: discover DEMO_* password env names from top-level persona JSON only.
+collect_demo_password_env_names_from_fixtures() {
+  local dir="$1" f line var tmp
+  DEMO_PASSWORD_ENV_NAMES=()
+  if [[ ! -d "$dir" ]]; then
+    printf 'Missing demo persona fixtures directory: %s\n' "$dir" >&2
+    return 2
+  fi
+  tmp="$(mktemp)"
+  phase0_register_tmp "$tmp"
+  for f in "${dir}"/*.json; do
+    [[ -f "$f" ]] || continue
+    grep -ho '"passwordEnv": *"DEMO_[A-Z_]*_PASSWORD"' "$f" 2>/dev/null >>"$tmp" || true
+  done
+  while IFS= read -r var; do
+    [[ -z "$var" ]] && continue
+    DEMO_PASSWORD_ENV_NAMES+=("$var")
+  done < <(sed -n 's/.*"\(DEMO_[A-Z_]*_PASSWORD\)".*/\1/p' "$tmp" | sort -u)
+  if ((${#DEMO_PASSWORD_ENV_NAMES[@]} == 0)); then
+    printf 'No DEMO_* password env names found in persona fixtures under %s\n' "$dir" >&2
+    return 2
+  fi
+  return 0
+}
+
 require_demo_env_vars_when_enabled() {
   local var missing=()
   if ! demo_profile_enabled; then
     return 0
   fi
-  for var in "${SCRIPT_DEMO_ENV_VARS[@]}"; do
+  collect_demo_password_env_names_from_fixtures "$(persona_fixtures_dir)" || exit $?
+  for var in "${DEMO_PASSWORD_ENV_NAMES[@]}"; do
     if [[ -z "${!var:-}" ]]; then
       missing+=("$var")
     fi

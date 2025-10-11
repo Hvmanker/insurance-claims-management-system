@@ -73,4 +73,22 @@ if ! wait_for_claim_service_http; then
   exit 1
 fi
 
+echo "stub: collect_demo_password_env_names_from_fixtures finds 9 persona passwords"
+collect_demo_password_env_names_from_fixtures "$(persona_fixtures_dir)"
+if ((${#DEMO_PASSWORD_ENV_NAMES[@]} != 9)); then
+  echo "FAIL: expected 9 demo password env names, got ${#DEMO_PASSWORD_ENV_NAMES[@]}" >&2
+  exit 1
+fi
+
+echo "stub: empty fixtures dir exits 2 with zero password env names"
+empty_fixtures="$(mktemp -d)"
+set +e
+collect_demo_password_env_names_from_fixtures "$empty_fixtures" >/dev/null 2>&1
+zero_rc=$?
+set -e
+if [[ "$zero_rc" -ne 2 ]]; then
+  echo "FAIL: empty fixtures dir should exit 2, got ${zero_rc}" >&2
+  exit 1
+fi
+
 echo "stub: all OK"
