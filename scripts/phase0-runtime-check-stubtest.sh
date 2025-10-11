@@ -282,6 +282,17 @@ if [[ "$compose_upper_rc" -ne 2 ]]; then
 fi
 echo "stub: compose-only validator rejected uppercase project name (exit ${compose_upper_rc})"
 
+echo "stub: compose-only validator under errexit (caller sees rc=2 and continues)"
+under_errexit_rc=0
+if ! phase0_validate_compose_project_name_compose_only "$bad_name_upper" >/dev/null 2>&1; then
+  under_errexit_rc=$?
+fi
+if [[ "$under_errexit_rc" -ne 2 ]]; then
+  echo "FAIL: compose-only under errexit should return 2, got ${under_errexit_rc}" >&2
+  exit 1
+fi
+echo "stub: compose-only validator under errexit returned rc=2; caller continued"
+
 echo "stub: PHASE0_NO_TEARDOWN compose project names and stop-before-up"
 STUB_DOCKER_LOG="$(mktemp)"
 DOCKER_STUB_LOG="$STUB_DOCKER_LOG"
@@ -349,9 +360,11 @@ fi
 
 echo "stub: PHASE0_NO_TEARDOWN guard accepts phase0check- suffix"
 bad_rc=0
-( unset PHASE0_NO_TEARDOWN; export COMPOSE_PROJECT=phase0check-extra; require_compose_project_guard ) 2>/dev/null || bad_rc=$?
+if ! env -u PHASE0_NO_TEARDOWN COMPOSE_PROJECT=phase0check-extra require_compose_project_guard 2>/dev/null; then
+  bad_rc=$?
+fi
 good_rc=0
-( export PHASE0_NO_TEARDOWN=1; export COMPOSE_PROJECT=phase0check-extra; require_compose_project_guard ) || good_rc=$?
+PHASE0_NO_TEARDOWN=1 COMPOSE_PROJECT=phase0check-extra require_compose_project_guard || good_rc=$?
 if [[ "$bad_rc" -eq 0 ]]; then
   echo "FAIL: phase0check-extra should fail guard without PHASE0_NO_TEARDOWN" >&2
   exit 1
