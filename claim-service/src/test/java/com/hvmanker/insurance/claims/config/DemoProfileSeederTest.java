@@ -257,6 +257,16 @@ class DemoProfileSeederTest {
     }
 
     @Test
+    void rejectsWeakDemoPasswordWithoutEchoingValue() {
+        String weakPassword = "Short1Only";
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class,
+                () -> DemoProfileSeeder.requirePassword("DEMO_AGENT_PASSWORD", weakPassword));
+        assertTrue(error.getMessage().contains("DEMO_AGENT_PASSWORD"));
+        assertFalse(error.getMessage().contains(weakPassword));
+    }
+
+    @Test
     void failsFastWhenDemoPasswordsAreWhitespaceOnly() throws Exception {
         Environment agentEnvironment = environmentWithPassword("DEMO_AGENT_PASSWORD", "   ");
         DemoProfileSeeder agentSeeder = new DemoProfileSeeder(
@@ -277,11 +287,13 @@ class DemoProfileSeederTest {
         assertTrue(insuredError.getMessage().contains("DEMO_INSURED_PASSWORD"));
     }
 
+    private static final String STRONG_DEMO_PASSWORD_PLACEHOLDER = "StrongDemoPass-9z";
+
     private static Environment environmentWithPassword(String propertyName, String value) {
         Environment environment = mock(Environment.class);
         when(environment.getProperty(argThat(
                 prop -> prop != null && prop.startsWith("DEMO_") && !propertyName.equals(prop))))
-                .thenReturn("present");
+                .thenReturn(STRONG_DEMO_PASSWORD_PLACEHOLDER);
         when(environment.getProperty(propertyName)).thenReturn(value);
         return environment;
     }
