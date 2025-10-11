@@ -388,14 +388,23 @@ curl_json() {
   printf '%s' "$code"
 }
 
-log_http_response_body_truncated() {
-  local max=500 chunk
+curl_response_body_snippet() {
+  local max="${1:-500}" chunk
   if [[ ! -f "${PHASE0_CURL_BODY}" ]]; then
-    log_line "response body: (none)"
+    printf '%s' "(none)"
     return
   fi
   chunk="$(head -c "$max" "${PHASE0_CURL_BODY}" 2>/dev/null | tr '\n' ' ')"
-  log_line "response body: $(mask_secrets "$chunk")"
+  mask_secrets "$chunk"
+}
+
+http_failure_appendix() {
+  local code="$1"
+  printf 'HTTP %s; body: %s' "$code" "$(curl_response_body_snippet 500)"
+}
+
+log_http_response_body_truncated() {
+  log_line "response body: $(curl_response_body_snippet 500)"
 }
 
 log_http_failure() {
@@ -576,6 +585,12 @@ check_04_flyway_and_empty_portal_without_demo() {
     emit_result "$nn" FAIL "$name" "non-demo stack not ready: ${COMPOSE_PS_STATUS_REPORT}"
     return
   fi
+  local active_profiles
+  active_profiles="$(claim_service_spring_profiles)"
+  if [[ "$active_profiles" == *demo* ]]; then
+    emit_result "$nn" FAIL "$name" "expected non-demo stack but claim-service SPRING_PROFILES_ACTIVE=${active_profiles:-<empty>}"
+    return
+  fi
   if compose logs claim-service 2>/dev/null | grep -qE 'Successfully applied|Schema .* is up to date|Flyway.*success'; then
     logs_ok=true
   fi
@@ -618,11 +633,19 @@ check_05_demo_sign_in_after_fresh_volume() {
   fi
   log_line "[05] claim-service SPRING_PROFILES_ACTIVE=${active_profiles:-<empty>}"
   log_line "[05] DemoProfileSeeder log line found=${seeder_found}"
+  if [[ "$active_profiles" != *demo* ]]; then
+    emit_result "$nn" FAIL "$name" "claim-service SPRING_PROFILES_ACTIVE missing demo (got: ${active_profiles:-<empty>})"
+    return
+  fi
+  if [[ "$seeder_found" != true ]]; then
+    emit_result "$nn" FAIL "$name" "claim-service logs missing DemoProfileSeeder line (${DEMO_SEEDER_LOG_MARKER}…)"
+    return
+  fi
   if login_user "agent@insureflow.local" "${DEMO_AGENT_PASSWORD}" "$jar"; then
     emit_result "$nn" PASS "$name" "agent@insureflow.local login HTTP 200 after down -v && up"
   else
     log_http_failure "[05] agent@insureflow.local login" "${PHASE0_LAST_HTTP_CODE}"
-    emit_result "$nn" FAIL "$name" "agent@insureflow.local login failed after fresh volume"
+    emit_result "$nn" FAIL "$name" "agent@insureflow.local login failed after fresh volume ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
   fi
 }
 
@@ -641,7 +664,7 @@ check_06_live_cache_authorization_tm_a() {
 
   if ! register_insured "tm-a-insured-phase0-$(date +%s)@example.com" "${DEMO_INSURED_PASSWORD}" "TM-A Insured A" "$jar_a"; then
     log_http_failure "[06] INSURED A registration" "${PHASE0_LAST_HTTP_CODE}"
-    emit_result "$nn" FAIL "$name" "INSURED A registration for check 06 failed"
+    emit_result "$nn" FAIL "$name" "INSURED A registration for check 06 failed ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
     return
   fi
   if ! submit_claim_check_06 "$jar_a"; then
@@ -655,7 +678,8 @@ check_06_live_cache_authorization_tm_a() {
   fi
 
   if ! login_user "agent@insureflow.local" "${DEMO_AGENT_PASSWORD}" "$jar_agent"; then
-    emit_result "$nn" FAIL "$name" "AGENT login failed"
+    log_http_failure "[06] AGENT login" "${PHASE0_LAST_HTTP_CODE}"
+    emit_result "$nn" FAIL "$name" "AGENT login failed ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
     return
   fi
   log_check_06_redis_scan "before-read"
@@ -675,7 +699,8 @@ check_06_live_cache_authorization_tm_a() {
   fi
 
   if ! register_insured "insured-b-phase0@example.com" "${DEMO_INSURED_PASSWORD}" "Insured B Phase0" "$jar_b"; then
-    emit_result "$nn" FAIL "$name" "INSURED B registration failed"
+    log_http_failure "[06] INSURED B registration" "${PHASE0_LAST_HTTP_CODE}"
+    emit_result "$nn" FAIL "$name" "INSURED B registration failed ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
     return
   fi
   code="$(curl_json GET "${BASE_URL}/claims/${claim_id}" "$jar_b")"
@@ -685,7 +710,8 @@ check_06_live_cache_authorization_tm_a() {
   fi
 
   if ! login_user "broker@insureflow.local" "${DEMO_BROKER_PASSWORD}" "$jar_broker"; then
-    emit_result "$nn" FAIL "$name" "BROKER login failed"
+    log_http_failure "[06] BROKER login" "${PHASE0_LAST_HTTP_CODE}"
+    emit_result "$nn" FAIL "$name" "BROKER login failed ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
     return
   fi
   code="$(curl_json GET "${BASE_URL}/claims/${claim_id}" "$jar_broker")"
@@ -756,7 +782,7 @@ check_13_tm_d_high_value_manual_decide() {
 
   if ! login_user "insured@insureflow.local" "${DEMO_INSURED_PASSWORD}" "$jar_insured"; then
     log_http_failure "[13] insured@insureflow.local login" "${PHASE0_LAST_HTTP_CODE}"
-    emit_result "$nn" FAIL "$name" "insured demo login failed"
+    emit_result "$nn" FAIL "$name" "insured demo login failed ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
     return
   fi
   if ! submit_claim "$jar_insured" "15000.00"; then
@@ -772,7 +798,7 @@ check_13_tm_d_high_value_manual_decide() {
   fi
   if ! login_user "agent@insureflow.local" "${DEMO_AGENT_PASSWORD}" "$jar_agent"; then
     log_http_failure "[13] agent@insureflow.local login" "${PHASE0_LAST_HTTP_CODE}"
-    emit_result "$nn" FAIL "$name" "legacy AGENT login failed"
+    emit_result "$nn" FAIL "$name" "legacy AGENT login failed ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
     return
   fi
   code="$(curl_json POST "${BASE_URL}/claims/${claim_id}/decision" "$jar_agent" \
