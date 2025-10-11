@@ -91,4 +91,62 @@ if [[ "$zero_rc" -ne 2 ]]; then
   exit 1
 fi
 
+demo_env_err="$(mktemp)"
+trap 'rm -rf "$STUB_BIN"; rm -f "$demo_env_err"' EXIT
+
+echo "stub: require_demo_env_vars_when_enabled fails when a demo password is unset"
+export SPRING_PROFILES_ACTIVE=demo
+collect_demo_password_env_names_from_fixtures "$(persona_fixtures_dir)"
+for v in "${DEMO_PASSWORD_ENV_NAMES[@]}"; do
+  export "${v}=stub-value-not-in-output"
+done
+unset DEMO_SIU_PASSWORD
+set +e
+( require_demo_env_vars_when_enabled ) 2>"$demo_env_err"
+unset_rc=$?
+set -e
+if [[ "$unset_rc" -ne 1 ]]; then
+  echo "FAIL: unset DEMO_SIU_PASSWORD should exit 1, got ${unset_rc}" >&2
+  exit 1
+fi
+if ! grep -q 'DEMO_SIU_PASSWORD' "$demo_env_err"; then
+  echo "FAIL: error should name DEMO_SIU_PASSWORD" >&2
+  exit 1
+fi
+if grep -q 'stub-value-not-in-output' "$demo_env_err"; then
+  echo "FAIL: error must not print password values" >&2
+  exit 1
+fi
+
+echo "stub: require_demo_env_vars_when_enabled fails when a demo password is set but empty"
+for v in "${DEMO_PASSWORD_ENV_NAMES[@]}"; do
+  export "${v}=stub-value-not-in-output"
+done
+export DEMO_SIU_PASSWORD=
+set +e
+( require_demo_env_vars_when_enabled ) 2>"$demo_env_err"
+empty_rc=$?
+set -e
+if [[ "$empty_rc" -ne 1 ]]; then
+  echo "FAIL: empty DEMO_SIU_PASSWORD= should exit 1, got ${empty_rc}" >&2
+  exit 1
+fi
+if ! grep -q 'DEMO_SIU_PASSWORD' "$demo_env_err"; then
+  echo "FAIL: empty-password error should name DEMO_SIU_PASSWORD" >&2
+  exit 1
+fi
+
+echo "stub: require_demo_env_vars_when_enabled passes when all 9 persona passwords are set"
+for v in "${DEMO_PASSWORD_ENV_NAMES[@]}"; do
+  export "${v}=stub-value-not-in-output"
+done
+set +e
+( require_demo_env_vars_when_enabled )
+all_ok_rc=$?
+set -e
+if [[ "$all_ok_rc" -ne 0 ]]; then
+  echo "FAIL: all nine demo passwords set should succeed" >&2
+  exit 1
+fi
+
 echo "stub: all OK"
