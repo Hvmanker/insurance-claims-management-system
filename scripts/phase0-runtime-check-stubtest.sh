@@ -200,7 +200,6 @@ if phase0_runtime_compose_project_name_valid "$bad_name_upper"; then
   exit 1
 fi
 
-export PHASE0_COMPOSE_CONFIG_ENV_FILE="${REPO_ROOT}/.env.example"
 if ! phase0_resolve_compose_executable; then
   if [[ "${PHASE0_ALLOW_SKIP:-}" == "1" ]]; then
     echo "SKIP: real docker compose CLI not available; config -q name validation not run (this is not a pass)"

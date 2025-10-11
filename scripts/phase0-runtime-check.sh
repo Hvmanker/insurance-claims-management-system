@@ -88,7 +88,7 @@ phase0_compose_config_env_file() {
   if [[ -n "${PHASE0_COMPOSE_CONFIG_ENV_FILE:-}" ]]; then
     printf '%s' "${PHASE0_COMPOSE_CONFIG_ENV_FILE}"
   else
-    printf '%s' "${REPO_ROOT}/.env"
+    printf '%s' "${REPO_ROOT}/.env.example"
   fi
 }
 
