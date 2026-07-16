@@ -1,0 +1,39 @@
+server:
+  port: 8082
+
+claims:
+  auto-approval-limit: ${AUTO_APPROVAL_LIMIT:10000.00}
+
+spring:
+  application:
+    name: approval-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/claims}
+    username: ${DB_USERNAME:claims}
+    password: ${DB_PASSWORD:claims}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    table: flyway_schema_history_approval_service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.sunil.insurance.common.events
+        spring.json.value.default.type: com.sunil.insurance.common.events.ClaimSubmittedEvent
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
