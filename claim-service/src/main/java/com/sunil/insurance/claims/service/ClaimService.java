@@ -8,6 +8,7 @@ import com.sunil.insurance.claims.web.SubmitClaimRequest;
 import com.sunil.insurance.common.ClaimStatus;
 import com.sunil.insurance.common.events.ClaimSubmittedEvent;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -51,11 +52,19 @@ public class ClaimService {
     }
 
     @Transactional(readOnly = true)
-    @Cacheable(cacheNames = "claims", key = "#claimId")
+    @Cacheable(cacheNames = "claims", key = "#p0")
     public ClaimResponse get(UUID claimId) {
         return claimRepository.findById(claimId)
                 .map(this::toResponse)
                 .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
+    }
+
+    @Transactional
+    @CacheEvict(cacheNames = "claims", key = "#p0")
+    public void updateStatus(UUID claimId, ClaimStatus status) {
+        Claim claim = claimRepository.findById(claimId)
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
+        claim.setStatus(status);
     }
 
     private ClaimResponse toResponse(Claim claim) {
@@ -70,4 +79,3 @@ public class ClaimService {
         );
     }
 }
-

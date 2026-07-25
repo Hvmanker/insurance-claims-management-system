@@ -29,8 +29,7 @@ public class ClaimController {
     }
 
     @GetMapping("/{claimId}")
-    public ClaimResponse get(@PathVariable UUID claimId) {
+    public ClaimResponse get(@PathVariable("claimId") UUID claimId) {
         return claimService.get(claimId);
     }
 }
-

@@ -74,8 +74,11 @@ public class Claim {
         return status;
     }
 
+    public void setStatus(ClaimStatus status) {
+        this.status = status;
+    }
+
     public Instant getSubmittedAt() {
         return submittedAt;
     }
 }
-

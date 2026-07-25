@@ -14,9 +14,14 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
+    properties:
+      hibernate.default_schema: approvals
     open-in-view: false
   flyway:
     enabled: true
+    schemas: approvals
+    default-schema: approvals
+    create-schemas: true
     table: flyway_schema_history_approval_service
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}

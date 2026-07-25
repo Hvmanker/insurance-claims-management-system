@@ -67,5 +67,4 @@ Claims at or below `AUTO_APPROVAL_LIMIT` are approved automatically and flow to 
 
 ## Notes
 
-The services use one PostgreSQL database for local development, with each service owning its own tables through Flyway migrations. In a stricter production deployment, each service would use a separate database or schema.
-
+The services use one PostgreSQL database for local development, with each data-owning service isolated in its own schema and managing that schema through Flyway migrations. A production deployment can split these schemas into separate databases.

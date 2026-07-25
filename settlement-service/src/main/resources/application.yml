@@ -11,9 +11,14 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
+    properties:
+      hibernate.default_schema: settlements
     open-in-view: false
   flyway:
     enabled: true
+    schemas: settlements
+    default-schema: settlements
+    create-schemas: true
     table: flyway_schema_history_settlement_service
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}

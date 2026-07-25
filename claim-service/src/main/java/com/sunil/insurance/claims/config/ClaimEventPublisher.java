@@ -3,6 +3,8 @@ package com.sunil.insurance.claims.config;
 import com.sunil.insurance.common.events.ClaimSubmittedEvent;
 import org.springframework.kafka.core.KafkaTemplate;
 
+import java.util.concurrent.ExecutionException;
+
 import static com.sunil.insurance.common.KafkaTopics.CLAIM_SUBMITTED;
 
 public class ClaimEventPublisher {
@@ -13,7 +15,13 @@ public class ClaimEventPublisher {
     }
 
     public void publish(ClaimSubmittedEvent event) {
-        kafkaTemplate.send(CLAIM_SUBMITTED, event.claimId().toString(), event);
+        try {
+            kafkaTemplate.send(CLAIM_SUBMITTED, event.claimId().toString(), event).get();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while publishing claim submission", exception);
+        } catch (ExecutionException exception) {
+            throw new IllegalStateException("Unable to publish claim submission", exception);
+        }
     }
 }
-
