@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
+import java.util.List;
 
 @RestController
 @RequestMapping("/claims")
@@ -26,6 +27,16 @@ public class ClaimController {
     @ResponseStatus(HttpStatus.CREATED)
     public ClaimResponse submit(@Valid @RequestBody SubmitClaimRequest request) {
         return claimService.submit(request);
+    }
+
+    @GetMapping
+    public List<ClaimResponse> recentClaims() {
+        return claimService.recentClaims();
+    }
+
+    @GetMapping("/summary")
+    public ClaimService.ClaimDashboardSummary summary() {
+        return claimService.dashboardSummary();
     }
 
     @GetMapping("/{claimId}")

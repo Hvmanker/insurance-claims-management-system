@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claims Operations</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/dashboard/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark"><i data-lucide="shield-check"></i></div>
+        <div>
+          <p class="eyebrow">Insurance Operations</p>
+          <h1>Claims Console</h1>
+        </div>
+      </div>
+      <div class="actions">
+        <p id="updated-at" class="updated-at">Loading</p>
+        <button id="refresh-button" class="icon-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">
+          <i data-lucide="refresh-cw"></i>
+        </button>
+      </div>
+    </header>
+
+    <section class="metrics" aria-label="Claims metrics">
+      <article class="metric-card">
+        <div class="metric-label"><i data-lucide="files"></i> Total claims</div>
+        <strong id="total-claims">--</strong>
+      </article>
+      <article class="metric-card accent-blue">
+        <div class="metric-label"><i data-lucide="clock-3"></i> In review</div>
+        <strong id="submitted-claims">--</strong>
+      </article>
+      <article class="metric-card accent-green">
+        <div class="metric-label"><i data-lucide="badge-check"></i> Settled</div>
+        <strong id="settled-claims">--</strong>
+      </article>
+      <article class="metric-card accent-amber">
+        <div class="metric-label"><i data-lucide="landmark"></i> Estimated exposure</div>
+        <strong id="estimated-exposure">--</strong>
+      </article>
+    </section>
+
+    <section class="workspace">
+      <section class="claims-panel" aria-label="Recent claims">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Live queue</p>
+            <h2>Recent claims</h2>
+          </div>
+          <label class="search-box">
+            <i data-lucide="search"></i>
+            <input id="claim-search" type="search" placeholder="Search policy or claimant">
+          </label>
+        </div>
+
+        <div class="status-strip" aria-label="Status summary">
+          <div><span class="status-dot submitted"></span><span id="submitted-count">0</span> submitted</div>
+          <div><span class="status-dot approved"></span><span id="approved-count">0</span> approved</div>
+          <div><span class="status-dot rejected"></span><span id="rejected-count">0</span> rejected</div>
+          <div><span class="status-dot settled"></span><span id="settled-count">0</span> settled</div>
+        </div>
+
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Claim</th>
+                <th>Policy</th>
+                <th>Type</th>
+                <th>Amount</th>
+                <th>Status</th>
+                <th>Submitted</th>
+              </tr>
+            </thead>
+            <tbody id="claims-table-body"></tbody>
+          </table>
+        </div>
+        <p id="empty-state" class="empty-state" hidden>No claims match this search.</p>
+      </section>
+
+      <aside class="submission-panel">
+        <div>
+          <p class="eyebrow">New intake</p>
+          <h2>Submit a claim</h2>
+        </div>
+        <form id="claim-form">
+          <label>
+            Policy number
+            <input name="policyNumber" required placeholder="POL-10050">
+          </label>
+          <label>
+            Claimant
+            <input name="claimantName" required placeholder="Full name">
+          </label>
+          <label>
+            Claim type
+            <select name="claimType">
+              <option value="AUTO">Auto</option>
+              <option value="HOME">Home</option>
+              <option value="HEALTH">Health</option>
+              <option value="PROPERTY">Property</option>
+            </select>
+          </label>
+          <label>
+            Estimated amount
+            <div class="amount-input"><span>$</span><input name="estimatedAmount" type="number" min="1" step="0.01" required placeholder="0.00"></div>
+          </label>
+          <button class="submit-button" type="submit">
+            <i data-lucide="send"></i>
+            Submit claim
+          </button>
+        </form>
+        <p id="form-message" class="form-message" role="status"></p>
+      </aside>
+    </section>
+  </main>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="/dashboard/app.js"></script>
+</body>
+</html>

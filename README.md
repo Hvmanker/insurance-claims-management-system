@@ -34,6 +34,12 @@ Start the infrastructure and services:
 docker compose up --build
 ```
 
+Open the operations dashboard:
+
+```text
+http://localhost:8081/dashboard
+```
+
 Submit a claim:
 
 ```bash
@@ -54,6 +60,21 @@ curl http://localhost:8081/claims/{claimId}
 ```
 
 Claims at or below `AUTO_APPROVAL_LIMIT` are approved automatically and flow to settlement. Higher-value claims are rejected with a manual-review reason.
+
+## Test the Workflow
+
+1. Start the stack with `docker compose up --build`.
+2. Open `http://localhost:8081/dashboard` and submit an Auto or Home claim below `$10,000`.
+3. Wait a few seconds for Kafka processing. The claim's status should change from `SUBMITTED` to `SETTLED`.
+4. Submit a claim above `$10,000` to verify the rejection path.
+5. Check the health endpoints:
+
+```bash
+curl http://localhost:8081/actuator/health
+curl http://localhost:8082/actuator/health
+curl http://localhost:8083/actuator/health
+curl http://localhost:8084/actuator/health
+```
 
 ## Service Ports
 

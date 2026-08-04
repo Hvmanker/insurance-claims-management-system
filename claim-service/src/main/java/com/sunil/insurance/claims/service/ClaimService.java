@@ -14,6 +14,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.math.BigDecimal;
+import java.util.EnumMap;
+import java.util.List;
 import java.util.UUID;
 
 import static org.springframework.http.HttpStatus.NOT_FOUND;
@@ -59,6 +62,36 @@ public class ClaimService {
                 .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
     }
 
+    @Transactional(readOnly = true)
+    public List<ClaimResponse> recentClaims() {
+        return claimRepository.findTop50ByOrderBySubmittedAtDesc().stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public ClaimDashboardSummary dashboardSummary() {
+        EnumMap<ClaimStatus, Long> counts = new EnumMap<>(ClaimStatus.class);
+        for (ClaimStatus status : ClaimStatus.values()) {
+            counts.put(status, 0L);
+        }
+
+        BigDecimal totalEstimatedAmount = BigDecimal.ZERO;
+        for (Claim claim : claimRepository.findAll()) {
+            counts.compute(claim.getStatus(), (status, count) -> count + 1);
+            totalEstimatedAmount = totalEstimatedAmount.add(claim.getEstimatedAmount());
+        }
+
+        return new ClaimDashboardSummary(
+                counts.values().stream().mapToLong(Long::longValue).sum(),
+                counts.get(ClaimStatus.SUBMITTED),
+                counts.get(ClaimStatus.APPROVED),
+                counts.get(ClaimStatus.REJECTED),
+                counts.get(ClaimStatus.SETTLED),
+                totalEstimatedAmount
+        );
+    }
+
     @Transactional
     @CacheEvict(cacheNames = "claims", key = "#p0")
     public void updateStatus(UUID claimId, ClaimStatus status) {
@@ -77,5 +110,15 @@ public class ClaimService {
                 claim.getStatus(),
                 claim.getSubmittedAt()
         );
+    }
+
+    public record ClaimDashboardSummary(
+            long totalClaims,
+            long submittedClaims,
+            long approvedClaims,
+            long rejectedClaims,
+            long settledClaims,
+            BigDecimal totalEstimatedAmount
+    ) {
     }
 }
