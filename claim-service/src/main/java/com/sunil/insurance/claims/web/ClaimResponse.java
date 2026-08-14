@@ -12,6 +12,7 @@ public record ClaimResponse(
         String policyNumber,
         String claimantName,
         String claimType,
+        String reason,
         BigDecimal estimatedAmount,
         ClaimStatus status,
         Instant submittedAt

@@ -48,5 +48,9 @@ public class ClaimApproval {
         this.reason = reason;
         this.decidedAt = decidedAt;
     }
-}
 
+    public BigDecimal getApprovedAmount() { return approvedAmount; }
+    public ApprovalDecision getDecision() { return decision; }
+    public String getReason() { return reason; }
+    public Instant getDecidedAt() { return decidedAt; }
+}

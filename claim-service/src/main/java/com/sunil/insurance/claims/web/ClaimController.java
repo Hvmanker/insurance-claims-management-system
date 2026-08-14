@@ -1,6 +1,8 @@
 package com.sunil.insurance.claims.web;
 
 import com.sunil.insurance.claims.service.ClaimService;
+import com.sunil.insurance.claims.domain.PortalUser;
+import com.sunil.insurance.claims.service.PortalUserService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,29 +20,31 @@ import java.util.List;
 @RequestMapping("/claims")
 public class ClaimController {
     private final ClaimService claimService;
+    private final PortalUserService portalUserService;
 
-    public ClaimController(ClaimService claimService) {
+    public ClaimController(ClaimService claimService, PortalUserService portalUserService) {
         this.claimService = claimService;
+        this.portalUserService = portalUserService;
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public ClaimResponse submit(@Valid @RequestBody SubmitClaimRequest request) {
-        return claimService.submit(request);
+    public ClaimResponse submit(@Valid @RequestBody SubmitClaimRequest request, java.security.Principal principal) {
+        return claimService.submit(request, portalUserService.currentUser(principal));
     }
 
     @GetMapping
-    public List<ClaimResponse> recentClaims() {
-        return claimService.recentClaims();
+    public List<ClaimResponse> recentClaims(java.security.Principal principal) {
+        return claimService.recentClaims(portalUserService.currentUser(principal));
     }
 
     @GetMapping("/summary")
-    public ClaimService.ClaimDashboardSummary summary() {
-        return claimService.dashboardSummary();
+    public ClaimService.ClaimDashboardSummary summary(java.security.Principal principal) {
+        return claimService.dashboardSummary(portalUserService.currentUser(principal));
     }
 
     @GetMapping("/{claimId}")
-    public ClaimResponse get(@PathVariable("claimId") UUID claimId) {
-        return claimService.get(claimId);
+    public ClaimResponse get(@PathVariable("claimId") UUID claimId, java.security.Principal principal) {
+        return claimService.get(claimId, portalUserService.currentUser(principal));
     }
 }

@@ -27,6 +27,12 @@ public class Claim {
     @Column(nullable = false, length = 40)
     private String claimType;
 
+    @Column(nullable = false, length = 1000)
+    private String reason;
+
+    @Column(name = "owner_id")
+    private UUID ownerId;
+
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal estimatedAmount;
 
@@ -40,11 +46,13 @@ public class Claim {
     protected Claim() {
     }
 
-    public Claim(UUID id, String policyNumber, String claimantName, String claimType, BigDecimal estimatedAmount, ClaimStatus status, Instant submittedAt) {
+    public Claim(UUID id, String policyNumber, String claimantName, String claimType, String reason, UUID ownerId, BigDecimal estimatedAmount, ClaimStatus status, Instant submittedAt) {
         this.id = id;
         this.policyNumber = policyNumber;
         this.claimantName = claimantName;
         this.claimType = claimType;
+        this.reason = reason;
+        this.ownerId = ownerId;
         this.estimatedAmount = estimatedAmount;
         this.status = status;
         this.submittedAt = submittedAt;
@@ -64,6 +72,14 @@ public class Claim {
 
     public String getClaimType() {
         return claimType;
+    }
+
+    public String getReason() {
+        return reason;
+    }
+
+    public UUID getOwnerId() {
+        return ownerId;
     }
 
     public BigDecimal getEstimatedAmount() {

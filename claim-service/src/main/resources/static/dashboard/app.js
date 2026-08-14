@@ -1,123 +1,61 @@
 var claims = [];
+var currentUser = null;
 var currencyFormatter = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 var dateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-function showMessage(message, isError) {
-  var messageElement = document.getElementById("form-message");
-  messageElement.textContent = message;
-  messageElement.classList.toggle("error", isError);
-}
-
-function createCell(text, className) {
-  var cell = document.createElement("td");
-  if (className) {
-    cell.className = className;
-  }
-  cell.textContent = text;
-  return cell;
-}
+function message(id, text, isError) { var element = document.getElementById(id); element.textContent = text; element.classList.toggle("error", Boolean(isError)); }
+function api(url, options) { return fetch(url, options).then(async function (response) { if (!response.ok) { var body = await response.json().catch(function () { return {}; }); throw new Error(body.detail || body.message || "Request could not be completed."); } return response.status === 204 ? null : response.json(); }); }
+function cell(text, className) { var element = document.createElement("td"); element.textContent = text; if (className) element.className = className; return element; }
 
 function renderClaims() {
   var query = document.getElementById("claim-search").value.trim().toLowerCase();
-  var visibleClaims = claims.filter(function (claim) {
-    return [claim.policyNumber, claim.claimantName, claim.claimType, claim.status]
-      .join(" ")
-      .toLowerCase()
-      .includes(query);
-  });
-  var body = document.getElementById("claims-table-body");
-  body.replaceChildren();
-
-  visibleClaims.forEach(function (claim) {
+  var visible = claims.filter(function (claim) { return [claim.policyNumber, claim.claimantName, claim.claimType, claim.reason, claim.status].join(" ").toLowerCase().includes(query); });
+  var body = document.getElementById("claims-table-body"); body.replaceChildren();
+  visible.forEach(function (claim) {
     var row = document.createElement("tr");
-    var claimantCell = createCell(claim.claimantName, "claimant");
-    var id = document.createElement("span");
-    id.textContent = claim.id.slice(0, 8).toUpperCase();
-    claimantCell.appendChild(id);
-
-    var statusCell = document.createElement("td");
-    var badge = document.createElement("span");
-    badge.className = "status-badge " + claim.status;
-    badge.textContent = claim.status;
-    statusCell.appendChild(badge);
-
-    row.append(
-      claimantCell,
-      createCell(claim.policyNumber),
-      createCell(claim.claimType),
-      createCell(currencyFormatter.format(claim.estimatedAmount), "money"),
-      statusCell,
-      createCell(dateFormatter.format(new Date(claim.submittedAt)), "date")
-    );
-    body.appendChild(row);
+    var primary = cell(currentUser.role === "AGENT" ? claim.claimantName : "Claim " + claim.id.slice(0, 8).toUpperCase(), "claimant");
+    var reason = cell(claim.reason, "reason"); reason.title = claim.reason;
+    var status = document.createElement("td"); var badge = document.createElement("span"); badge.className = "status-badge " + claim.status; badge.textContent = claim.status; status.appendChild(badge);
+    row.append(primary, cell(claim.policyNumber), cell(claim.claimType), reason, cell(currencyFormatter.format(claim.estimatedAmount), "money"), status, cell(dateFormatter.format(new Date(claim.submittedAt)), "date")); body.appendChild(row);
   });
-  document.getElementById("empty-state").hidden = visibleClaims.length !== 0;
+  document.getElementById("empty-state").hidden = visible.length !== 0;
 }
-
 function updateSummary(summary) {
   document.getElementById("total-claims").textContent = summary.totalClaims;
   document.getElementById("submitted-claims").textContent = summary.submittedClaims;
   document.getElementById("settled-claims").textContent = summary.settledClaims;
   document.getElementById("estimated-exposure").textContent = currencyFormatter.format(summary.totalEstimatedAmount);
-  document.getElementById("submitted-count").textContent = summary.submittedClaims;
-  document.getElementById("approved-count").textContent = summary.approvedClaims;
-  document.getElementById("rejected-count").textContent = summary.rejectedClaims;
-  document.getElementById("settled-count").textContent = summary.settledClaims;
+  ["submitted", "approved", "rejected", "settled"].forEach(function (status) { document.getElementById(status + "-count").textContent = summary[status + "Claims"]; });
 }
-
-async function refreshDashboard() {
-  var refreshButton = document.getElementById("refresh-button");
-  refreshButton.disabled = true;
-  refreshButton.querySelector("svg").classList.add("spin");
-  try {
-    var responses = await Promise.all([fetch("/claims"), fetch("/claims/summary")]);
-    if (!responses[0].ok || !responses[1].ok) {
-      throw new Error("Could not load the dashboard.");
-    }
-    claims = await responses[0].json();
-    updateSummary(await responses[1].json());
-    renderClaims();
-    document.getElementById("updated-at").textContent = "Updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  } catch (error) {
-    showMessage(error.message, true);
-  } finally {
-    refreshButton.disabled = false;
-    refreshButton.querySelector("svg").classList.remove("spin");
-  }
+async function refreshPortal() {
+  var refresh = document.getElementById("refresh-button"); refresh.disabled = true;
+  try { var results = await Promise.all([api("/claims"), api("/claims/summary")]); claims = results[0]; updateSummary(results[1]); renderClaims(); }
+  catch (error) { message("form-message", error.message, true); }
+  finally { refresh.disabled = false; }
 }
-
+function showPortal(user) {
+  currentUser = user; document.getElementById("auth-view").hidden = true; document.getElementById("portal-view").hidden = false;
+  var agent = user.role === "AGENT";
+  document.getElementById("portal-role").textContent = agent ? "Agent workspace" : "Insured member portal";
+  document.getElementById("portal-title").textContent = agent ? "Claims operations" : "My claims";
+  document.getElementById("queue-label").textContent = agent ? "Live queue" : "Your coverage";
+  document.getElementById("queue-title").textContent = agent ? "Member claim activity" : "Claim activity";
+  document.getElementById("exposure-label").textContent = agent ? "Estimated exposure" : "Claim value";
+  document.getElementById("claimant-heading").textContent = agent ? "Member" : "Claim";
+  document.getElementById("user-name").textContent = user.fullName;
+  document.getElementById("submission-panel").hidden = agent;
+  refreshPortal();
+}
+async function authenticate(event, endpoint) {
+  event.preventDefault(); var form = event.currentTarget; var button = form.querySelector("button"); button.disabled = true; message("auth-message", "", false);
+  try { showPortal(await api(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(new FormData(form).entries())) })); }
+  catch (error) { message("auth-message", error.message, true); } finally { button.disabled = false; }
+}
+document.querySelectorAll("[data-auth-mode]").forEach(function (button) { button.addEventListener("click", function () { var register = button.dataset.authMode === "register"; document.getElementById("login-form-wrap").hidden = register; document.getElementById("register-form-wrap").hidden = !register; document.querySelectorAll("[data-auth-mode]").forEach(function (tab) { tab.classList.toggle("active", tab === button); }); message("auth-message", "", false); }); });
+document.getElementById("login-form").addEventListener("submit", function (event) { authenticate(event, "/api/auth/login"); });
+document.getElementById("register-form").addEventListener("submit", function (event) { authenticate(event, "/api/auth/register"); });
 document.getElementById("claim-search").addEventListener("input", renderClaims);
-document.getElementById("refresh-button").addEventListener("click", refreshDashboard);
-document.getElementById("claim-form").addEventListener("submit", async function (event) {
-  event.preventDefault();
-  var form = event.currentTarget;
-  var button = form.querySelector("button");
-  button.disabled = true;
-  showMessage("Submitting claim...", false);
-  var data = Object.fromEntries(new FormData(form).entries());
-  data.estimatedAmount = Number(data.estimatedAmount);
-
-  try {
-    var response = await fetch("/claims", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data)
-    });
-    if (!response.ok) {
-      throw new Error("Claim submission could not be completed.");
-    }
-    form.reset();
-    showMessage("Claim submitted. Workflow status will update automatically.", false);
-    await refreshDashboard();
-  } catch (error) {
-    showMessage(error.message, true);
-  } finally {
-    button.disabled = false;
-  }
-});
-
-window.addEventListener("load", function () {
-  lucide.createIcons();
-  refreshDashboard();
-  window.setInterval(refreshDashboard, 15000);
-});
+document.getElementById("refresh-button").addEventListener("click", refreshPortal);
+document.getElementById("logout-button").addEventListener("click", async function () { await fetch("/api/auth/logout", { method: "POST" }); window.location.reload(); });
+document.getElementById("claim-form").addEventListener("submit", async function (event) { event.preventDefault(); var form = event.currentTarget; var button = form.querySelector("button"); button.disabled = true; message("form-message", "Submitting your claim...", false); var data = Object.fromEntries(new FormData(form).entries()); data.estimatedAmount = Number(data.estimatedAmount); try { await api("/claims", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }); form.reset(); message("form-message", "Claim submitted. Its status will update automatically as the workflow completes.", false); await refreshPortal(); } catch (error) { message("form-message", error.message, true); } finally { button.disabled = false; } });
+window.addEventListener("load", async function () { lucide.createIcons(); try { showPortal(await api("/api/auth/me")); } catch (_) {} window.setInterval(function () { if (currentUser) refreshPortal(); }, 15000); });

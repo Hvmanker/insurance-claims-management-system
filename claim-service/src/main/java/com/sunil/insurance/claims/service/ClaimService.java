@@ -3,6 +3,8 @@ package com.sunil.insurance.claims.service;
 import com.sunil.insurance.claims.config.ClaimEventPublisher;
 import com.sunil.insurance.claims.domain.Claim;
 import com.sunil.insurance.claims.domain.ClaimRepository;
+import com.sunil.insurance.claims.domain.PortalUser;
+import com.sunil.insurance.claims.domain.UserRole;
 import com.sunil.insurance.claims.web.ClaimResponse;
 import com.sunil.insurance.claims.web.SubmitClaimRequest;
 import com.sunil.insurance.common.ClaimStatus;
@@ -20,6 +22,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.springframework.http.HttpStatus.NOT_FOUND;
+import static org.springframework.http.HttpStatus.FORBIDDEN;
 
 @Service
 public class ClaimService {
@@ -32,12 +35,17 @@ public class ClaimService {
     }
 
     @Transactional
-    public ClaimResponse submit(SubmitClaimRequest request) {
+    public ClaimResponse submit(SubmitClaimRequest request, PortalUser owner) {
+        if (owner.getRole() != UserRole.INSURED) {
+            throw new ResponseStatusException(FORBIDDEN, "Only insured members can submit claims");
+        }
         var claim = new Claim(
                 UUID.randomUUID(),
                 request.policyNumber(),
-                request.claimantName(),
+                owner.getFullName(),
                 request.claimType(),
+                request.reason(),
+                owner.getId(),
                 request.estimatedAmount(),
                 ClaimStatus.SUBMITTED,
                 Instant.now()
@@ -56,28 +64,32 @@ public class ClaimService {
 
     @Transactional(readOnly = true)
     @Cacheable(cacheNames = "claims", key = "#p0")
-    public ClaimResponse get(UUID claimId) {
-        return claimRepository.findById(claimId)
-                .map(this::toResponse)
-                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
+    public ClaimResponse get(UUID claimId, PortalUser user) {
+        return toResponse(findVisibleClaim(claimId, user));
     }
 
     @Transactional(readOnly = true)
-    public List<ClaimResponse> recentClaims() {
-        return claimRepository.findTop50ByOrderBySubmittedAtDesc().stream()
+    public List<ClaimResponse> recentClaims(PortalUser user) {
+        List<Claim> claims = user.getRole() == UserRole.AGENT
+                ? claimRepository.findTop50ByOrderBySubmittedAtDesc()
+                : claimRepository.findTop50ByOwnerIdOrderBySubmittedAtDesc(user.getId());
+        return claims.stream()
                 .map(this::toResponse)
                 .toList();
     }
 
     @Transactional(readOnly = true)
-    public ClaimDashboardSummary dashboardSummary() {
+    public ClaimDashboardSummary dashboardSummary(PortalUser user) {
         EnumMap<ClaimStatus, Long> counts = new EnumMap<>(ClaimStatus.class);
         for (ClaimStatus status : ClaimStatus.values()) {
             counts.put(status, 0L);
         }
 
         BigDecimal totalEstimatedAmount = BigDecimal.ZERO;
-        for (Claim claim : claimRepository.findAll()) {
+        List<Claim> visibleClaims = user.getRole() == UserRole.AGENT
+                ? claimRepository.findAll()
+                : claimRepository.findTop50ByOwnerIdOrderBySubmittedAtDesc(user.getId());
+        for (Claim claim : visibleClaims) {
             counts.compute(claim.getStatus(), (status, count) -> count + 1);
             totalEstimatedAmount = totalEstimatedAmount.add(claim.getEstimatedAmount());
         }
@@ -106,10 +118,20 @@ public class ClaimService {
                 claim.getPolicyNumber(),
                 claim.getClaimantName(),
                 claim.getClaimType(),
+                claim.getReason(),
                 claim.getEstimatedAmount(),
                 claim.getStatus(),
                 claim.getSubmittedAt()
         );
+    }
+
+    private Claim findVisibleClaim(UUID claimId, PortalUser user) {
+        if (user.getRole() == UserRole.AGENT) {
+            return claimRepository.findById(claimId)
+                    .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
+        }
+        return claimRepository.findByIdAndOwnerId(claimId, user.getId())
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
     }
 
     public record ClaimDashboardSummary(

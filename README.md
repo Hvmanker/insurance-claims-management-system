@@ -34,21 +34,32 @@ Start the infrastructure and services:
 docker compose up --build
 ```
 
-Open the operations dashboard:
+Open the secure insurance portal:
 
 ```text
 http://localhost:8081/dashboard
 ```
 
-Submit a claim:
+Create an insured member account, sign in, and submit a claim from the portal. The form requires a claim reason and the claim is visible only to its owner.
+
+For the local agent workspace, sign in with:
+
+```text
+agent@insureflow.local
+Agent@12345
+```
+
+The seeded credential is for local development only. Passwords created through the portal are stored as BCrypt hashes; use a secret manager and SSO/MFA in a production deployment.
+
+The protected API can also be exercised with a session cookie. A claim request now requires a reason:
 
 ```bash
 curl -X POST http://localhost:8081/claims \
   -H 'Content-Type: application/json' \
   -d '{
     "policyNumber": "POL-10045",
-    "claimantName": "Avery Johnson",
     "claimType": "AUTO",
+    "reason": "Collision damage after another vehicle entered my lane.",
     "estimatedAmount": 7250.00
   }'
 ```
@@ -64,7 +75,7 @@ Claims at or below `AUTO_APPROVAL_LIMIT` are approved automatically and flow to 
 ## Test the Workflow
 
 1. Start the stack with `docker compose up --build`.
-2. Open `http://localhost:8081/dashboard` and submit an Auto or Home claim below `$10,000`.
+2. Open `http://localhost:8081/dashboard`, create an insured member account, and submit an Auto or Home claim below `$10,000` with a reason.
 3. Wait a few seconds for Kafka processing. The claim's status should change from `SUBMITTED` to `SETTLED`.
 4. Submit a claim above `$10,000` to verify the rejection path.
 5. Check the health endpoints:
@@ -89,3 +100,5 @@ curl http://localhost:8084/actuator/health
 ## Notes
 
 The services use one PostgreSQL database for local development, with each data-owning service isolated in its own schema and managing that schema through Flyway migrations. A production deployment can split these schemas into separate databases.
+
+`claim-service` owns the portal authentication boundary. It uses Spring Security sessions, BCrypt password hashing, role-aware access (`INSURED` and `AGENT`), and claim ownership checks. Agents can review the full operational queue; insured members can only access their own claims.
