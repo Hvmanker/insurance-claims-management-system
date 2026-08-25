@@ -1,6 +1,5 @@
 package com.sunil.insurance.claims.config;
 
-import com.sunil.insurance.common.events.ClaimSubmittedEvent;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -8,6 +7,7 @@ import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.KafkaTemplate;
 
 import static com.sunil.insurance.common.KafkaTopics.CLAIM_SUBMITTED;
+import static com.sunil.insurance.common.KafkaTopics.CLAIM_MANUAL_DECISION;
 
 @Configuration
 public class KafkaProducerConfig {
@@ -17,8 +17,12 @@ public class KafkaProducerConfig {
     }
 
     @Bean
-    ClaimEventPublisher claimEventPublisher(KafkaTemplate<String, ClaimSubmittedEvent> kafkaTemplate) {
+    NewTopic claimManualDecisionTopic() {
+        return TopicBuilder.name(CLAIM_MANUAL_DECISION).partitions(3).replicas(1).build();
+    }
+
+    @Bean
+    ClaimEventPublisher claimEventPublisher(KafkaTemplate<String, Object> kafkaTemplate) {
         return new ClaimEventPublisher(kafkaTemplate);
     }
 }
-

@@ -7,8 +7,10 @@ import com.sunil.insurance.claims.domain.PortalUser;
 import com.sunil.insurance.claims.domain.UserRole;
 import com.sunil.insurance.claims.web.ClaimResponse;
 import com.sunil.insurance.claims.web.SubmitClaimRequest;
+import com.sunil.insurance.claims.web.ManualDecisionRequest;
 import com.sunil.insurance.common.ClaimStatus;
 import com.sunil.insurance.common.events.ClaimSubmittedEvent;
+import com.sunil.insurance.common.events.ManualClaimDecisionEvent;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
@@ -110,6 +112,22 @@ public class ClaimService {
         Claim claim = claimRepository.findById(claimId)
                 .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
         claim.setStatus(status);
+    }
+
+    @Transactional
+    public ClaimResponse decide(UUID claimId, ManualDecisionRequest request, PortalUser agent) {
+        if (agent.getRole() != UserRole.AGENT) {
+            throw new ResponseStatusException(FORBIDDEN, "Only agents can make claim decisions");
+        }
+        Claim claim = claimRepository.findById(claimId)
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
+        if (claim.getStatus() != ClaimStatus.SUBMITTED) {
+            throw new ResponseStatusException(FORBIDDEN, "This claim is no longer awaiting a decision");
+        }
+        eventPublisher.publishManualDecision(new ManualClaimDecisionEvent(
+                claim.getId(), claim.getPolicyNumber(), claim.getEstimatedAmount(), request.approved(),
+                request.reason().trim(), agent.getFullName(), Instant.now()));
+        return toResponse(claim);
     }
 
     private ClaimResponse toResponse(Claim claim) {
