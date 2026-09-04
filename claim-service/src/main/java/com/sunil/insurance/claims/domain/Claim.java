@@ -30,6 +30,9 @@ public class Claim {
     @Column(nullable = false, length = 1000)
     private String reason;
 
+    @Column(nullable = false, length = 2000)
+    private String description;
+
     @Column(name = "owner_id")
     private UUID ownerId;
 
@@ -46,12 +49,13 @@ public class Claim {
     protected Claim() {
     }
 
-    public Claim(UUID id, String policyNumber, String claimantName, String claimType, String reason, UUID ownerId, BigDecimal estimatedAmount, ClaimStatus status, Instant submittedAt) {
+    public Claim(UUID id, String policyNumber, String claimantName, String claimType, String reason, String description, UUID ownerId, BigDecimal estimatedAmount, ClaimStatus status, Instant submittedAt) {
         this.id = id;
         this.policyNumber = policyNumber;
         this.claimantName = claimantName;
         this.claimType = claimType;
         this.reason = reason;
+        this.description = description;
         this.ownerId = ownerId;
         this.estimatedAmount = estimatedAmount;
         this.status = status;
@@ -77,6 +81,8 @@ public class Claim {
     public String getReason() {
         return reason;
     }
+
+    public String getDescription() { return description; }
 
     public UUID getOwnerId() {
         return ownerId;

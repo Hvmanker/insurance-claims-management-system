@@ -47,6 +47,7 @@ public class ClaimService {
                 owner.getFullName(),
                 request.claimType(),
                 request.reason(),
+                request.description(),
                 owner.getId(),
                 request.estimatedAmount(),
                 ClaimStatus.SUBMITTED,
@@ -127,6 +128,7 @@ public class ClaimService {
         eventPublisher.publishManualDecision(new ManualClaimDecisionEvent(
                 claim.getId(), claim.getPolicyNumber(), claim.getEstimatedAmount(), request.approved(),
                 request.reason().trim(), agent.getFullName(), Instant.now()));
+        claim.setStatus(request.approved() ? ClaimStatus.APPROVED : ClaimStatus.REJECTED);
         return toResponse(claim);
     }
 
@@ -137,6 +139,7 @@ public class ClaimService {
                 claim.getClaimantName(),
                 claim.getClaimType(),
                 claim.getReason(),
+                claim.getDescription(),
                 claim.getEstimatedAmount(),
                 claim.getStatus(),
                 claim.getSubmittedAt()

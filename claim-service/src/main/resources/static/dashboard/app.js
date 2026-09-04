@@ -10,14 +10,15 @@ function cell(text, className) { var element = document.createElement("td"); ele
 
 function renderClaims() {
   var query = document.getElementById("claim-search").value.trim().toLowerCase();
-  var visible = claims.filter(function (claim) { return [claim.policyNumber, claim.claimantName, claim.claimType, claim.reason, claim.status].join(" ").toLowerCase().includes(query); });
+  var visible = claims.filter(function (claim) { return [claim.policyNumber, claim.claimantName, claim.claimType, claim.reason, claim.description, claim.status].join(" ").toLowerCase().includes(query); });
   var body = document.getElementById("claims-table-body"); body.replaceChildren();
   visible.forEach(function (claim) {
     var row = document.createElement("tr");
     var primary = cell(currentUser.role === "AGENT" ? claim.claimantName : "Claim " + claim.id.slice(0, 8).toUpperCase(), "claimant");
     var reason = cell(claim.reason, "reason"); reason.title = claim.reason;
+    var description = cell(claim.description, "reason"); description.title = claim.description;
     var status = document.createElement("td"); var badge = document.createElement("span"); badge.className = "status-badge " + claim.status; badge.textContent = claim.status; status.appendChild(badge);
-    row.append(primary, cell(claim.policyNumber), cell(claim.claimType), reason, cell(currencyFormatter.format(claim.estimatedAmount), "money"), status, cell(dateFormatter.format(new Date(claim.submittedAt)), "date"));
+    row.append(primary, cell(claim.policyNumber), cell(claim.claimType), reason, description, cell(currencyFormatter.format(claim.estimatedAmount), "money"), status, cell(dateFormatter.format(new Date(claim.submittedAt)), "date"));
     if (currentUser.role === "AGENT") { var actions = document.createElement("td"); if (claim.status === "SUBMITTED") { ["Approve", "Reject"].forEach(function (decision) { var button = document.createElement("button"); button.type = "button"; button.className = "decision-button " + decision.toLowerCase(); button.textContent = decision; button.addEventListener("click", function () { openDecision(claim, decision === "Approve"); }); actions.appendChild(button); }); } row.appendChild(actions); }
     body.appendChild(row);
   });

@@ -10,7 +10,8 @@ import java.math.BigDecimal;
 public record SubmitClaimRequest(
         @NotBlank String policyNumber,
         @NotBlank String claimType,
-        @NotBlank @Size(max = 1000) String reason,
+        @NotBlank @Size(max = 120) String reason,
+        @NotBlank @Size(max = 2000) String description,
         @NotNull @DecimalMin("1.00") BigDecimal estimatedAmount
 ) {
 }
