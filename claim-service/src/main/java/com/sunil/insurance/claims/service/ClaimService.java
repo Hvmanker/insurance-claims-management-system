@@ -3,11 +3,14 @@ package com.sunil.insurance.claims.service;
 import com.sunil.insurance.claims.config.ClaimEventPublisher;
 import com.sunil.insurance.claims.domain.Claim;
 import com.sunil.insurance.claims.domain.ClaimRepository;
+import com.sunil.insurance.claims.domain.ClaimEvent;
+import com.sunil.insurance.claims.domain.ClaimEventRepository;
 import com.sunil.insurance.claims.domain.PortalUser;
 import com.sunil.insurance.claims.domain.UserRole;
 import com.sunil.insurance.claims.web.ClaimResponse;
 import com.sunil.insurance.claims.web.SubmitClaimRequest;
 import com.sunil.insurance.claims.web.ManualDecisionRequest;
+import com.sunil.insurance.claims.web.ClaimTimelineEntry;
 import com.sunil.insurance.common.ClaimStatus;
 import com.sunil.insurance.common.events.ClaimSubmittedEvent;
 import com.sunil.insurance.common.events.ManualClaimDecisionEvent;
@@ -29,10 +32,12 @@ import static org.springframework.http.HttpStatus.FORBIDDEN;
 @Service
 public class ClaimService {
     private final ClaimRepository claimRepository;
+    private final ClaimEventRepository claimEventRepository;
     private final ClaimEventPublisher eventPublisher;
 
-    public ClaimService(ClaimRepository claimRepository, ClaimEventPublisher eventPublisher) {
+    public ClaimService(ClaimRepository claimRepository, ClaimEventRepository claimEventRepository, ClaimEventPublisher eventPublisher) {
         this.claimRepository = claimRepository;
+        this.claimEventRepository = claimEventRepository;
         this.eventPublisher = eventPublisher;
     }
 
@@ -54,6 +59,7 @@ public class ClaimService {
                 Instant.now()
         );
         Claim saved = claimRepository.save(claim);
+        recordEvent(saved.getId(), "SUBMITTED", "Claim submitted", "Claim submitted for " + saved.getReason(), owner.getFullName());
         eventPublisher.publish(new ClaimSubmittedEvent(
                 saved.getId(),
                 saved.getPolicyNumber(),
@@ -113,6 +119,7 @@ public class ClaimService {
         Claim claim = claimRepository.findById(claimId)
                 .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
         claim.setStatus(status);
+        recordEvent(claimId, status.name(), statusTitle(status), "Workflow updated this claim to " + status.name().toLowerCase() + ".", "InsureFlow workflow");
     }
 
     @Transactional
@@ -129,7 +136,16 @@ public class ClaimService {
                 claim.getId(), claim.getPolicyNumber(), claim.getEstimatedAmount(), request.approved(),
                 request.reason().trim(), agent.getFullName(), Instant.now()));
         claim.setStatus(request.approved() ? ClaimStatus.APPROVED : ClaimStatus.REJECTED);
+        recordEvent(claimId, "AGENT_DECISION", request.approved() ? "Claim approved by agent" : "Claim rejected by agent", request.reason().trim(), agent.getFullName());
         return toResponse(claim);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ClaimTimelineEntry> timeline(UUID claimId, PortalUser user) {
+        findVisibleClaim(claimId, user);
+        return claimEventRepository.findByClaimIdOrderByOccurredAtAsc(claimId).stream()
+                .map(ClaimTimelineEntry::from)
+                .toList();
     }
 
     private ClaimResponse toResponse(Claim claim) {
@@ -153,6 +169,19 @@ public class ClaimService {
         }
         return claimRepository.findByIdAndOwnerId(claimId, user.getId())
                 .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
+    }
+
+    private void recordEvent(UUID claimId, String eventType, String title, String detail, String actor) {
+        claimEventRepository.save(new ClaimEvent(UUID.randomUUID(), claimId, eventType, title, detail, actor, Instant.now()));
+    }
+
+    private String statusTitle(ClaimStatus status) {
+        return switch (status) {
+            case APPROVED -> "Claim approved";
+            case REJECTED -> "Claim rejected";
+            case SETTLED -> "Claim settled";
+            case SUBMITTED -> "Claim submitted";
+        };
     }
 
     public record ClaimDashboardSummary(

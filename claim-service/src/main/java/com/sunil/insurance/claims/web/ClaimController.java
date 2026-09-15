@@ -48,6 +48,11 @@ public class ClaimController {
         return claimService.get(claimId, portalUserService.currentUser(principal));
     }
 
+    @GetMapping("/{claimId}/timeline")
+    public List<ClaimTimelineEntry> timeline(@PathVariable("claimId") UUID claimId, java.security.Principal principal) {
+        return claimService.timeline(claimId, portalUserService.currentUser(principal));
+    }
+
     @PostMapping("/{claimId}/decision")
     public ClaimResponse decide(@PathVariable("claimId") UUID claimId, @Valid @RequestBody ManualDecisionRequest request, java.security.Principal principal) {
         return claimService.decide(claimId, request, portalUserService.currentUser(principal));

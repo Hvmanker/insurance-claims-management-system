@@ -83,6 +83,11 @@
         <div class="dialog-actions"><button id="cancel-decision" class="secondary-button" type="button">Cancel</button><button id="confirm-decision" class="primary-button" type="submit">Confirm decision</button></div>
       </form>
     </dialog>
+    <dialog id="claim-dialog" class="decision-dialog claim-dialog">
+      <div class="dialog-heading"><div><p class="eyebrow">Claim record</p><h2 id="claim-detail-title">Claim details</h2></div><button id="close-claim" class="icon-button" type="button" aria-label="Close claim details" title="Close"><i data-lucide="x"></i></button></div>
+      <div id="claim-detail-meta" class="claim-detail-meta"></div>
+      <section class="timeline-section"><p class="eyebrow">Activity timeline</p><ol id="claim-timeline" class="timeline"></ol></section>
+    </dialog>
   </main>
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="/dashboard/app.js"></script>
