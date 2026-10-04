@@ -37,7 +37,7 @@ docker compose up --build
 Open the secure insurance portal:
 
 ```text
-http://localhost:8081/dashboard
+http://localhost:8085/dashboard
 ```
 
 Create an insured member account, sign in, and submit a claim from the portal. The form requires a claim reason and the claim is visible only to its owner.
@@ -89,7 +89,7 @@ curl http://localhost:8084/actuator/health
 
 ## Service Ports
 
-- Claim Service: `8081`
+- Claim Service: `8085` on the host (`8081` inside Docker)
 - Approval Service: `8082`
 - Settlement Service: `8083`
 - Notification Service: `8084`
