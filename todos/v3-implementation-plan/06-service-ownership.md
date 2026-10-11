@@ -5,12 +5,14 @@ Status: accepted plan
 
 No service writes another service's tables. Each service owns a schema in one PostgreSQL instance. The public read model lives in claim-service and is updated by consuming events.
 
+**No service changes a state it does not own.** Events may cross service boundaries, but only the owning service performs the transition and writes its audit row.
+
 ## Who owns which transition
 
 | Service | Owns |
 | --- | --- |
-| claim-service | DRAFT to SUBMITTED, MORE_INFO_REQUESTED back to ANALYSIS_PENDING, EXPIRED, and the public read model. |
-| approval-service | Every decision from ANALYSIS_PENDING through APPROVED, REJECTED, and MORE_INFO_REQUESTED. **Authority limit enforcement** (ADR-018) lives here from slice 6A. From slice 6, also **ESCALATED**, **UNDER_INVESTIGATION**, assignment, and SLA. |
+| claim-service | **DRAFT → SUBMITTED** and the **public read model** (updated via inbox). When the insured supplies documents, claim-service **publishes `claim.info.provided`** only; it does **not** move `MORE_INFO_REQUESTED` itself. |
+| approval-service | Every transition from **ANALYSIS_PENDING** onward: through **APPROVED**, **REJECTED**, and **MORE_INFO_REQUESTED**, including **MORE_INFO_REQUESTED → ANALYSIS_PENDING** (after consuming `claim.info.provided`) and **MORE_INFO_REQUESTED → EXPIRED** (slice 2 simple scheduled job; slice 5 repackages as Spring Batch per ADR-012). After the owned transition, approval-service emits **`claim.analysis.requested`** when returning to analysis. **Authority limit enforcement** (ADR-018) lives here from slice 6A. From slice 6, also **ESCALATED**, **UNDER_INVESTIGATION**, assignment, and SLA. |
 | settlement-service | APPROVED to SIMULATED_SETTLED. A record only. From slice 6, settlement holds block that transition until release. |
 | notification-service | Delivery. It publishes to SNS. An SQS queue with its own DLQ performs outbound retries. It does not change claim state. |
 | analysis worker | Reads READY documents and publishes facts. It does not write claim, approval, or settlement tables. |

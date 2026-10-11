@@ -25,10 +25,10 @@ The failure cases are what distinguish this project. Each one gets a named autom
 | — | Consumer crash mid-processing | Offset not committed; reprocessed once in effect | 4 | |
 | — | Poisoned event | Lands in the DLT with sanitized metadata; replay succeeds | 4 | |
 | — | PII in logs (platform-wide) | Known fake PII on error paths never appears in captured logs | 5 | |
-| — | Stale MORE_INFO_REQUESTED claim | Batch job moves it to EXPIRED | 5 | |
+| — | Stale MORE_INFO_REQUESTED claim | approval-service scheduled job moves it to EXPIRED (slice 2; Spring Batch repackaging in slice 5) | 2 | |
 | — | Contract drift | Java and Python both validate the same `contracts/` fixtures | 1, 3 | |
 | — | VM restart | Services recover; outbox drains; no lost events | 8 | |
-| — | Adjuster decides above their authority limit | Refused; the claim routes to ESCALATED for a supervisor | 6 | |
+| — | Adjuster decides above their authority limit | Approve **or reject** over limit is refused with 403 `AUTHORITY_LIMIT_EXCEEDED`; the claim routes to ESCALATED for a supervisor | 6 | |
 | — | User acts on their own claim or own policy | Denied and written to the audit trail | 6 | |
 | — | Rule change proposed and approved by the same person | Refused; the change takes effect only after a second approver | 6 | |
 | — | Auditor or Admin attempts a claim decision | Refused; read-only and configuration-only access verified | 6 | |

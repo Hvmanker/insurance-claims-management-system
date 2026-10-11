@@ -72,7 +72,7 @@ Estimated total: about the plan's 8 to 10 weeks part-time (01). Splitting phases
   - Confirm and extend ADRs: nine core states per **ADR-009** (`SIMULATED_SETTLED` inside the nine; no claimant-withdrawal state; `ESCALATED` and `UNDER_INVESTIGATION` in slice 6); **ADR-015** two-step `BROKER` vs legacy `AGENT`; **ADR-018** authority limits (enforcement in 6A, doc only in slice 0).
   - `contracts/` with the envelope and schemas and fixtures for the four business events (`claim.submitted`, `claim.analysis.completed`, `claim.decided`, `settlement.simulated`).
   - Personas and seeds for all 8 roles, including agent-to-client links.
-  - Move the seeded agent credential to an env-driven seed profile, and decide the fate of the hash in V2 (21).
+  - Move the seeded agent credential to an env-driven seed profile; **0.4** removes the V2 bcrypt hash and re-seeds from env (21).
   - **Compose hardening (slice 0):** drop host ports on Postgres, Redis, Kafka, and the non-gateway services; only **claim-service `8081:8081`** is published (not deferred to slice 5B or 8).
   - **`make ci` skeleton (slice 0):** `mvn verify`, `docker compose config`, compose port check, and **gitleaks** (with `rg` fallback). Slice **5A** adds Jenkins, Trivy, JSON logs, and Grafana — it does not re-introduce gitleaks.
 - **Prereqs:** none.
@@ -83,7 +83,7 @@ Estimated total: about the plan's 8 to 10 weeks part-time (01). Splitting phases
 ### Phase 1A: Data & event foundation (slice 1, part 1)
 - **Deliverables**
   - Additive Flyway migrations: new states and old→new mapping (04, ADR-009); the `policies` table with synthetic seeds (07).
-  - Outbox and inbox library in `common`, built and tested once (10). The publisher claims rows with a **Postgres advisory lock** or **`FOR UPDATE SKIP LOCKED`** on outbox rows. Redis locks only arrive in slice 6.
+  - Outbox and inbox library in `common`, built and tested once (10). The publisher claims work with a **Postgres advisory lock** (slice 1 onward) so one claim's outbox events publish **in order**. **`FOR UPDATE SKIP LOCKED` with multiple publishers is rejected** because it can interleave events for the same claim. **Redis locks apply only to later scheduled jobs** (slice 5 batch expiry, slice 6 one-runner jobs), not the outbox publisher.
   - Envelope types; Java fixture validation against `contracts/`.
   - Versioned `claim.decided` and `settlement.simulated` topics alongside the old ones. Retire the old topics with a versioned contract, not a silent payload change (09).
 - **Gate tests:** "Crash between DB commit and publish"; "Contract drift" (Java half).
@@ -107,7 +107,7 @@ Estimated total: about the plan's 8 to 10 weeks part-time (01). Splitting phases
 - **Deliverables**
   - A stub analysis consumer publishing a valid `claim.analysis.completed` fixture (14).
   - The 5-rule decision table in approval-service, thresholds in config, and an audit of the rules that passed (05).
-  - Adjuster approve, reject (coded reason), and request-more-info endpoints with an optimistic `version` and audit rows.
+  - Adjuster **approve** and **reject** (coded reason) endpoints with an optimistic `version` and audit rows. **Request-more-info is slice 2** (with documents).
   - Settlement → SIMULATED_SETTLED.
   - The claim-service read model fed through the inbox.
   - Decide whether to reuse the existing `claim_events` timeline table (V4) or add a separate audit table. The gap analysis (03) does not mention V4.
@@ -133,8 +133,10 @@ Estimated total: about the plan's 8 to 10 weeks part-time (01). Splitting phases
   - Orphan cleanup.
   - Fixture generator v1 (15).
   - Insured upload with per-file status; adjuster document viewer.
+  - **Request-more-info** endpoint (moved from slice 1): adjuster asks for documents; insured response flows **`claim.info.provided`** → approval-service transition → **`claim.analysis.requested`** (06, 04).
+  - Simple **scheduled expiry** for stale `MORE_INFO_REQUESTED` → `EXPIRED` in approval-service (Spring Batch repackaging in slice 5).
   - Submit now requires a READY document. That means DRAFT→SUBMITTED becomes real, and the slice-1 E2E has to be updated.
-- **Gate tests:** "Another user's … document"; "Oversized, wrong-type, or bad-signature upload"; "Submit without a READY document is refused" (25).
+- **Gate tests:** "Another user's … document"; "Oversized, wrong-type, or bad-signature upload"; "Submit without a READY document is refused" (25); **a claim in `MORE_INFO_REQUESTED` can always leave it** (info provided or expiry).
 - **Roles:** Planner, Architect, Designer, Coder, Tester, E2E, Verifier.
 - **Risks:** partial S3 compatibility. The adapter tests are the contract (ADR-007).
 
@@ -247,10 +249,10 @@ Estimated total: about the plan's 8 to 10 weeks part-time (01). Splitting phases
 ## 4. Gaps, contradictions, and ambiguities found
 
 1. **The gateway and Next.js container in slice 1 are ambiguous.** Doc 24 doesn't list them. Doc 11 says the slice 1 shell plus the slice 5/8 edge. ADR-013 says slice 1 *can* add the gateway. The memory note in 24 assumes it. *Recommendation:* add both in 1D so memory is measured honestly.
-2. **The outbox publisher lock comes too late.** Doc 12 and slice 6 put the one-runner outbox lock in slice 6, but the publisher ships in slice 1. Use a DB row lock in 1A.
-3. **MORE_INFO_REQUESTED in slice 1 has no exit path.** The endpoint is in slice 1, but returning to ANALYSIS_PENDING "when documents arrive" needs slice 2, and expiry needs slice 5. Accept a temporary dead-end, or hide the action until Phase 2.
+2. **Outbox publisher lock — resolved.** Slice **1A** uses a **Postgres advisory lock** on the outbox publisher (per-claim order). Redis one-runner locks for **scheduled jobs** arrive in slices 5–6 (doc 12). `FOR UPDATE SKIP LOCKED` on outbox rows was considered and **rejected**.
+3. **MORE_INFO exit path — resolved.** Request-more-info is **slice 2** with documents. Slice **2** ships a simple expiry job; slice **5** repackages it as Spring Batch. Gate: a claim in `MORE_INFO_REQUESTED` can always leave (info or expiry).
 4. **The "submit needs a READY document" change (slice 2) alters the slice-1 contract and journey.** Plan the E2E update in Phase 2.
-5. **Status ownership is split.** Approval-service owns the transition *to* MORE_INFO_REQUESTED (06). Claim-service owns *from* it (back to ANALYSIS_PENDING, and to EXPIRED via ADR-012). The authoritative status lives in the claim-service read model. The Architect needs to define which service holds the current state per transition, and how claim-service learns about it, before Phase 1A's migration.
+5. **Status ownership — resolved (06, ADR-009).** **approval-service** owns every transition from `ANALYSIS_PENDING` onward, including `MORE_INFO_REQUESTED` → `ANALYSIS_PENDING` and → `EXPIRED`. claim-service publishes **`claim.info.provided`** only; approval-service emits **`claim.analysis.requested`** after the transition. The read model in claim-service learns via inbox events.
 6. **The worker contract fields look like the withdrawn medical draft.** `provider_name` and `date_of_service` (14) are not auto repair-estimate terms (ADR-002, date of loss). Confirm the field names in `contracts/` during Phase 0.
 7. **Slice 0 says "write the ADRs" for the state machine, decision table, role model, and authority limits.** ADR-009, 004, 015, and **018** (authority limits) are the plan record after slice 0 decision docs.
 8. **The gap analysis (03) omits migrations V3 and V4.** V4 adds a `claim_events` timeline table (actor, title, detail). It overlaps with the v3 audit table and has no reason code, version, or correlation id.
@@ -268,7 +270,7 @@ Estimated total: about the plan's 8 to 10 weeks part-time (01). Splitting phases
 |---|---|---|
 | What today's AGENT maps to (recommend Adjuster) | Phase 0 → 1B | User + Architect |
 | Final core enum (is SIMULATED_SETTLED inside the nine?) | **Settled in slice 0:** yes, nine states per ADR-009; `ESCALATED` / `UNDER_INVESTIGATION` in slice 6 | — |
-| Committed V2 password hash: keep for local seed, or move | Phase 0 | User |
+| Committed V2 password hash | **Settled:** remove hash from V2 in **0.4**; demo-profile seeder from env; README password burnt (21) | — |
 | SeaweedFS or Garage | Start of Phase 2 | Adapter tests |
 | Floci, MiniStack, or LocalStack (token) | Start of 5B | Spike |
 | Self-hosted Grafana or Grafana Cloud free tier | 5A, after RAM check | Measurement |

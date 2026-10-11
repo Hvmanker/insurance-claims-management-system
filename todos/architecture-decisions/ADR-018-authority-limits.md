@@ -24,9 +24,9 @@ Cost: no external rules engine; limits live beside the decision table in approva
 
 ## Decision
 
-1. **Enforcing service:** **approval-service** evaluates authority limits on every human decision path it owns (approve and reject; request-more-info follows the same actor checks where applicable).
-2. **Compared amount:** the claim's **assessed/estimated amount** used for auto-approval and review routing (the same monetary field the decision table and adjuster UI use for limit comparison). State this field explicitly in contracts and the read model; do not compare ad hoc columns.
-3. **Currency:** a single **ISO-4217** currency code for the deployment. **No foreign-exchange conversion** in limit checks.
+1. **Enforcing service:** **approval-service** evaluates authority limits on **approve** and **reject** only. **Request-more-info is not limit-gated** (SoD checks still apply to all three decision types).
+2. **Compared amount:** use the **approved amount when present**, otherwise **`estimatedAmount`** (today's field on the claim entity). This is the same monetary value used for auto-approval routing and adjuster limit comparison in contracts and the read model.
+3. **Currency:** all limit comparisons use **`USD`** (ISO-4217). **No foreign-exchange conversion** in limit checks.
 4. **Decimal rules:** **`BigDecimal` only**, scale **2**, rounding mode **`HALF_EVEN`** for any normalization before compare.
 5. **Over limit:** refuse the decision with **403** and reason code **`AUTHORITY_LIMIT_EXCEEDED`**, and transition the claim to **`ESCALATED`** (slice 6A state; see ADR-009).
 6. **Escalation decisions:** only **SUPERVISOR** may approve, reject, or otherwise decide claims in **`ESCALATED`**.
@@ -67,7 +67,7 @@ Cost: no external rules engine; limits live beside the decision table in approva
 
 - Folder impact: `approval-service` decision endpoints, limit configuration, audit rows, claim read model updates via events for `ESCALATED`.
 - Deployment: config or DB-backed limits per role; feature flag not required once 6A ships.
-- Testing: test matrix row "Adjuster decides above their authority limit"; own-claim and supervisor-only escalation cases in slice 6.
+- Testing: test matrix row "Adjuster decides above their authority limit" (approve **and** reject over limit → 403 and `ESCALATED`); own-claim and supervisor-only escalation cases in slice 6.
 - Rollback: disable limit enforcement via config only if a critical bug appears; do not remove audit rows.
 
 ## Teaching Section
