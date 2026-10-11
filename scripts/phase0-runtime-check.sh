@@ -522,20 +522,7 @@ check_07_tm_b_kafka_integration() {
   local nn="07" name
   name="$(check_display_name 6)"
   if has_tm_b_kafka_integration_test; then
-    local mvn_out tests_run failures errors skipped
-    mvn_out="$(mvn -B -pl notification-service test \
-      -Dtest=WorkflowNotificationListenerLogLeakTest \
-      -Dsurefire.failIfNoSpecifiedTests=false 2>&1 || true)"
-    tests_run="$(printf '%s' "$mvn_out" | sed -n 's/.*Tests run: \([0-9]*\).*/\1/p' | tail -1)"
-    failures="$(printf '%s' "$mvn_out" | sed -n 's/.*Failures: \([0-9]*\).*/\1/p' | tail -1)"
-    errors="$(printf '%s' "$mvn_out" | sed -n 's/.*Errors: \([0-9]*\).*/\1/p' | tail -1)"
-    skipped="$(printf '%s' "$mvn_out" | sed -n 's/.*Skipped: \([0-9]*\).*/\1/p' | tail -1)"
-    tests_run="${tests_run:-0}"; failures="${failures:-0}"; errors="${errors:-0}"; skipped="${skipped:-0}"
-    if [[ "$tests_run" -gt 0 && "$failures" == "0" && "$errors" == "0" && "$skipped" == "0" ]]; then
-      emit_result "$nn" PASS "$name" "Kafka integration TM-B: tests run=${tests_run} failures=0"
-    else
-      emit_result "$nn" FAIL "$name" "Kafka integration TM-B: run=${tests_run} failures=${failures} errors=${errors} skipped=${skipped}"
-    fi
+    emit_result "$nn" FAIL "$name" "Kafka integration TM-B test present but no docker-based runner in this script"
     return
   fi
   emit_result "$nn" SKIPPED "$name" "no Kafka integration test for TM-B (unit-only WorkflowNotificationListenerLogLeakTest on main)"

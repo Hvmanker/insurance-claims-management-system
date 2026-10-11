@@ -16,10 +16,10 @@ If `COMPOSE_PROJECT` is unset or any other value, the script exits **2** before 
 
 - Docker and Docker Compose v2
 - Bash, `curl`, and `python3` (JSON parsing)
-- Optional: `nc` (secondary host-port probe), `shellcheck` (lint), Maven (only if a Kafka integration TM-B test exists)
+- Optional: `nc` (secondary host-port probe), `shellcheck` (lint)
 - A **`.env`** file at the repo root (copy from `.env.example`). The script loads **only** `.env` for credentials and test configuration. It fails fast if `.env` is missing.
 - When `SPRING_PROFILES_ACTIVE` includes `demo`, the script exits before Docker if any of `DEMO_AGENT_PASSWORD`, `DEMO_INSURED_PASSWORD`, or `DEMO_BROKER_PASSWORD` is unset (all three are listed in `.env.example` with placeholders).
-- **Service JARs:** the script does not run Maven. Compose `up --build` copies pre-built jars via `Dockerfile.service`. Until the multi-stage `Dockerfile.service` change lands (so images build from a clean clone without local jars), run `mvn -DskipTests package` with **Java 21** once from the repo root before the script.
+- **Service JARs:** the script does not run Maven and does not require pre-built jars on the host. Multi-stage `Dockerfile.service` builds jars inside `docker compose up --build`.
 
 ## Usage
 
@@ -29,7 +29,6 @@ From the repository root:
 cp .env.example .env
 # Edit .env — set strong passwords and SPRING_PROFILES_ACTIVE=demo for demo-user checks.
 
-mvn -DskipTests package   # required until multi-stage Dockerfile.service merges
 export COMPOSE_PROJECT=phase0check
 ./scripts/phase0-runtime-check.sh
 
