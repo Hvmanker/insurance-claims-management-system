@@ -45,9 +45,18 @@ Install Java 21, Maven, and Docker, then build the service jars:
 mvn clean package
 ```
 
-Start the infrastructure and services:
+Copy environment variables from the example file, then start the infrastructure and services:
 
 ```bash
+cp .env.example .env
+# Edit `.env` and replace placeholder passwords before starting the stack.
+docker compose up --build
+```
+
+**One-time database reset:** migration `V2__add_portal_accounts_and_claim_reason.sql` no longer inserts demo users (they are seeded by the `demo` Spring profile from environment passwords). If you previously ran this project against an existing Postgres volume, reset once so Flyway can re-apply the changed migration:
+
+```bash
+docker compose down -v
 docker compose up --build
 ```
 
@@ -59,14 +68,9 @@ http://localhost:8085/dashboard
 
 Create an insured member account, sign in, and submit a claim from the portal. The form requires a claim reason and the claim is visible only to its owner.
 
-For the local agent workspace, sign in with:
+With `SPRING_PROFILES_ACTIVE=demo` (see `.env.example`), demo portal users are seeded at startup: legacy agent `agent@insureflow.local` and insured `insured@insureflow.local`. Use the `DEMO_AGENT_PASSWORD` and `DEMO_INSURED_PASSWORD` values from your `.env` file. Without the `demo` profile, `portal_users` stays empty until someone registers through the portal.
 
-```text
-agent@insureflow.local
-Agent@12345
-```
-
-The seeded credential is for local development only. Passwords created through the portal are stored as BCrypt hashes; use a secret manager and SSO/MFA in a production deployment.
+Passwords created through the portal are stored as BCrypt hashes; use a secret manager and SSO/MFA in a production deployment.
 
 The protected API can also be exercised with a session cookie. A claim request now requires a reason:
 
