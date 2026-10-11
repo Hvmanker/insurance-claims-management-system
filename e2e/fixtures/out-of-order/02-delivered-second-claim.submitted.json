@@ -3,7 +3,7 @@
   "eventType": "claim.submitted",
   "schemaVersion": 1,
   "aggregateId": "b2000000-0000-4000-8000-00000000e301",
-  "occurredAt": "2026-10-06T14:00:00Z",
+  "occurredAt": "2026-10-06T10:00:00Z",
   "correlationId": "c3000000-0000-4000-8000-00000000e301",
   "causationId": null,
   "payload": {
@@ -12,7 +12,7 @@
     "claimantName": "Synthetic Driver E301",
     "claimType": "Auto",
     "estimatedAmount": "4200.00",
-    "submittedAt": "2026-10-06T14:00:00Z",
+    "submittedAt": "2026-10-06T10:00:00Z",
     "documents": [
       {
         "documentId": "d4000000-0000-4000-8000-00000000e301",

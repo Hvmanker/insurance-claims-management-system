@@ -180,16 +180,26 @@ class ContractFixturesTest {
     }
 
     @Test
-    void outOfOrderScenarioHasDecidedBeforeSubmitted() throws IOException {
+    void outOfOrderScenarioLateDeliveryDiffersFromTimeline() throws IOException {
         Path scenarioDir = findRepoRoot().resolve("e2e/fixtures/out-of-order");
-        JsonNode submitted = readFixture(scenarioDir.resolve("claim.submitted.json"));
-        JsonNode decided = readFixture(scenarioDir.resolve("claim.decided-earlier-occurred-at.json"));
+        List<JsonNode> deliveryOrder = loadScenarioEvents(scenarioDir);
+        assertEquals(2, deliveryOrder.size());
 
-        assertEquals(submitted.get("aggregateId").asText(), decided.get("aggregateId").asText());
-        Instant submittedAt = Instant.parse(submitted.get("occurredAt").asText());
-        Instant decidedAt = Instant.parse(decided.get("occurredAt").asText());
-        assertTrue(decidedAt.isBefore(submittedAt),
-                "claim.decided occurredAt should be earlier than claim.submitted for the same aggregate");
+        JsonNode deliveredFirst = deliveryOrder.get(0);
+        JsonNode deliveredSecond = deliveryOrder.get(1);
+        assertEquals("claim.decided", deliveredFirst.get("eventType").asText());
+        assertEquals("claim.submitted", deliveredSecond.get("eventType").asText());
+
+        Instant submittedOccurredAt = Instant.parse(deliveredSecond.get("occurredAt").asText());
+        Instant decidedOccurredAt = Instant.parse(deliveredFirst.get("occurredAt").asText());
+        assertEquals(deliveredFirst.get("aggregateId").asText(), deliveredSecond.get("aggregateId").asText());
+        assertTrue(submittedOccurredAt.isBefore(decidedOccurredAt),
+                "True timeline: claim.submitted occurredAt must be before claim.decided occurredAt");
+
+        Instant firstDeliveredOccurredAt = Instant.parse(deliveredFirst.get("occurredAt").asText());
+        Instant secondDeliveredOccurredAt = Instant.parse(deliveredSecond.get("occurredAt").asText());
+        assertTrue(firstDeliveredOccurredAt.isAfter(secondDeliveredOccurredAt),
+                "Delivery order must differ from occurredAt order (decided delivered first despite later occurredAt)");
     }
 
     @Test
