@@ -30,7 +30,12 @@ Adopt eight roles: Insured, Agent (broker book), Adjuster, Supervisor, SIU inves
 
 **Step 1 — Phase 0 (slice 0):** Add **`BROKER`** as a **new** `UserRole` value. The dashboard labels it **"Agent"**. Legacy **`AGENT` stays unchanged** so the existing decide flow and demo seed keep working until slice 1B. New roles introduced in Phase 0 are inert for claims access until their slices ship.
 
-**Step 2 — Slice 1B:** Run an **additive Flyway migration** that maps existing **`AGENT` users to `ADJUSTER`**, retires **`AGENT`** as a decision role, and updates seeds. After 1B, adjusters decide within authority limits (enforced in 6A per ADR-018); brokers (`BROKER`) never decide claims.
+**Step 2 — Slice 1B (two PRs):**
+
+- **1B PR 1:** Data migration only: `UPDATE` existing **`AGENT` users to `ADJUSTER`** and switch authorization checks to Adjuster in the **same** deploy. No enum value or column is removed in this PR (the `AGENT` enum value may remain unused).
+- **1B PR 2 (later):** Drop the legacy **`AGENT`** enum value and clean seeds/docs once nothing references it.
+
+After 1B PR 1, adjusters replace the legacy approver path; authority limits enforce in 6A (ADR-018). Brokers (`BROKER`) never decide claims.
 
 Do not leave both "agent as approver" and "agent as broker" on one enum value.
 

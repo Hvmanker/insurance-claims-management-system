@@ -20,7 +20,7 @@ Scalability: slice 6 adds `ESCALATED` and `UNDER_INVESTIGATION` as extensions fr
 
 Security: only a human rejects. From slice 6, only inside authority (see ADR-018), and never on their own claim or policy.
 
-Cost: one batch job for expiry. No workflow engine license.
+Cost: a simple scheduled expiry job in slice 2; Spring Batch repackaging in slice 5. No workflow engine license.
 
 ## Decision
 
@@ -37,10 +37,10 @@ The v3 **core** claim lifecycle uses **nine** states. **`SIMULATED_SETTLED` is o
 | 5 | APPROVED | Rules passed or a human approved within authority. |
 | 6 | REJECTED | Human rejected with a coded reason. |
 | 7 | MORE_INFO_REQUESTED | Human requested documents; may return to analysis or expire. |
-| 8 | EXPIRED | Batch job expired a stale `MORE_INFO_REQUESTED` claim. |
+| 8 | EXPIRED | approval-service expired a stale `MORE_INFO_REQUESTED` claim (slice 2 job; Spring Batch from slice 5). |
 | 9 | SIMULATED_SETTLED | Settlement terminal (simulated; no money movement). |
 
-`REVIEW_READY` is the human gate. `MORE_INFO_REQUESTED` returns to `ANALYSIS_PENDING` when documents arrive, or the batch job moves it to `EXPIRED`. Settlement-service owns the transition from `APPROVED` to `SIMULATED_SETTLED`. Map old statuses with an additive Flyway migration.
+`REVIEW_READY` is the human gate. **approval-service** owns all transitions from `MORE_INFO_REQUESTED`: after claim-service publishes **`claim.info.provided`**, approval-service moves to `ANALYSIS_PENDING` and emits **`claim.analysis.requested`**; expiry to `EXPIRED` runs in **slice 2** (scheduled job) and is repackaged in **slice 5** (Spring Batch). Settlement-service owns `APPROVED` → `SIMULATED_SETTLED`. Map old statuses with an additive Flyway migration.
 
 ### Slice 6 additions (not part of the nine)
 
