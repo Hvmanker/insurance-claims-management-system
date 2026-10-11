@@ -142,6 +142,28 @@ compose_with_profile() {
   SPRING_PROFILES_ACTIVE="$profile" compose "$@"
 }
 
+# `docker compose port` may return empty or a binding ending in `:0` when the
+# container port is not published on the host; treat both as unpublished.
+compose_port_is_published() {
+  local mapping="$1"
+  [[ -n "$mapping" ]] && [[ "$mapping" != *:0 ]]
+}
+
+log_repo_git_state() {
+  local head porcelain
+  head="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+  porcelain="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null || true)"
+  log_line "git rev-parse HEAD: ${head}"
+  log_line "git status --porcelain"
+  if [[ -z "$porcelain" ]]; then
+    log_line "(clean)"
+  else
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && log_line "$line"
+    done <<< "$porcelain"
+  fi
+}
+
 redis_scan_claims_keys() {
   compose exec -T redis redis-cli -a "${REDIS_PASSWORD}" --no-auth-warning --scan --pattern 'claims*' 2>/dev/null || true
 }
@@ -308,8 +330,8 @@ check_02_host_port_exposure() {
     port="${entry##*:}"
     mapping="$(compose port "$svc" "$port" 2>/dev/null || true)"
     if [[ "$svc" == "claim-service" && "$port" == "8081" ]]; then
-      if [[ -z "$mapping" ]]; then
-        fail_reasons+=("claim-service:8081 has no compose port mapping")
+      if ! compose_port_is_published "$mapping"; then
+        fail_reasons+=("claim-service:8081 is not published on the host (compose port: ${mapping:-<empty>})")
         continue
       fi
       host_port="${mapping##*:}"
@@ -318,7 +340,7 @@ check_02_host_port_exposure() {
       fi
       continue
     fi
-    if [[ -n "$mapping" ]]; then
+    if compose_port_is_published "$mapping"; then
       fail_reasons+=("${svc}:${port} compose port returned ${mapping}")
       continue
     fi
@@ -662,6 +684,7 @@ main() {
 
   : > "$LOG_FILE"
   log_line "phase0-runtime-check starting at ${TIMESTAMP}"
+  log_repo_git_state
   log_line "repo=${REPO_ROOT} COMPOSE_PROJECT=${COMPOSE_PROJECT}"
 
   log_line "compose down -v (throwaway stack)"

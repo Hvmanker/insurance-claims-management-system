@@ -1,6 +1,6 @@
 # Phase 0 runtime check
 
-`scripts/phase0-runtime-check.sh` brings up a **throwaway** Docker Compose stack, runs the Verifier’s 13 Phase 0 gate checks against the live services, writes a timestamped log, and tears down only resources in project `phase0check`.
+`scripts/phase0-runtime-check.sh` brings up a **throwaway** Docker Compose stack, runs the Verifier’s 15 Phase 0 gate checks against the live services, writes a timestamped log, and tears down only resources in project `phase0check`.
 
 ## Safety guard (required)
 
@@ -19,7 +19,7 @@ If `COMPOSE_PROJECT` is unset or any other value, the script exits **2** before 
 - Optional: `nc` (secondary host-port probe), `shellcheck` (lint), Maven (only if a Kafka integration TM-B test exists)
 - A **`.env`** file at the repo root (copy from `.env.example`). The script loads **only** `.env` for credentials and test configuration. It fails fast if `.env` is missing.
 - When `SPRING_PROFILES_ACTIVE` includes `demo`, the script exits before Docker if any of `DEMO_AGENT_PASSWORD`, `DEMO_INSURED_PASSWORD`, or `DEMO_BROKER_PASSWORD` is unset (all three are listed in `.env.example` with placeholders).
-- Built JARs are not required upfront; `compose up --build` builds images.
+- **Service JARs:** the script does not run Maven. Compose `up --build` copies pre-built jars via `Dockerfile.service`. Until the multi-stage `Dockerfile.service` change lands (so images build from a clean clone without local jars), run `mvn -DskipTests package` with **Java 21** once from the repo root before the script.
 
 ## Usage
 
@@ -29,6 +29,7 @@ From the repository root:
 cp .env.example .env
 # Edit .env — set strong passwords and SPRING_PROFILES_ACTIVE=demo for demo-user checks.
 
+mvn -DskipTests package   # required until multi-stage Dockerfile.service merges
 export COMPOSE_PROJECT=phase0check
 ./scripts/phase0-runtime-check.sh
 ```
@@ -41,7 +42,7 @@ Output is teed to `phase0-runtime-check-<UTC-timestamp>.log` in the repo root. V
 2. `docker compose -p phase0check down -v`
 3. `docker compose -p phase0check up -d --build`
 4. Waits for Compose health (timeout `PHASE0_HEALTH_TIMEOUT_SEC`, default 900s).
-5. Runs checks **01–13** in the order of the `CHECKS` array at the top of the script (reorder there to match the Verifier).
+5. Runs checks **01–15** in the order of the `CHECKS` array at the top of the script (reorder there to match the Verifier).
 6. Prints `SUMMARY pass=… fail=… skipped=… total=15`
 7. Exits **0** only if all 15 checks **PASS**; any **FAIL** or **SKIPPED** yields a non-zero exit.
 
