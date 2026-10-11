@@ -39,7 +39,7 @@ jobs:
           cid="$(docker create "$image_id")"
           docker cp "$cid:/app/app.jar" /tmp/cs.jar
           docker rm "$cid"
-          mapfile -t persona_json < <(unzip -l /tmp/cs.jar | awk '/BOOT-INF\/classes\/fixtures\/personas\/.*\.json$/ {print $4}')
+          mapfile -t persona_json < <(unzip -Z1 /tmp/cs.jar | grep -E '^BOOT-INF/classes/fixtures/personas/.*\.json$')
           count="${#persona_json[@]}"
           echo "Persona fixture JSON entries (${count}):"
           printf '%s\n' "${persona_json[@]}"

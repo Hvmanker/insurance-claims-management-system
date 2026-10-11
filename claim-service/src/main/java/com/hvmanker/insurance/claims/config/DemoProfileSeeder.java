@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 @Component
 @Profile("demo")
@@ -33,6 +34,7 @@ public class DemoProfileSeeder implements ApplicationRunner {
     static final String PERSONA_FIXTURES_PATTERN = PERSONA_FIXTURES_LOCATION + "*.json";
     static final String MISSING_PERSONA_FIXTURES_MESSAGE =
             "demo profile active but no persona fixtures at " + PERSONA_FIXTURES_LOCATION;
+    static final Pattern DEMO_PASSWORD_ENV_PATTERN = Pattern.compile("^DEMO_[A-Z_]+_PASSWORD$");
 
     static final UUID AGENT_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     static final UUID INSURED_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
@@ -58,7 +60,8 @@ public class DemoProfileSeeder implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) throws IOException {
         for (PersonaFixture persona : loadPersonaFixtures()) {
-            String rawPassword = requirePassword(persona.passwordEnv(), environment.getProperty(persona.passwordEnv()));
+            String passwordEnv = persona.passwordEnv();
+            String rawPassword = requirePassword(passwordEnv, environment.getProperty(passwordEnv));
             seedUser(persona.id(), persona.email(), persona.fullName(), persona.role(), rawPassword);
         }
     }
@@ -77,6 +80,7 @@ public class DemoProfileSeeder implements ApplicationRunner {
         List<PersonaFixture> personas = new ArrayList<>();
         for (Resource resource : resources) {
             PersonaFixture persona = objectMapper.readValue(resource.getInputStream(), PersonaFixture.class);
+            requireValidDemoPasswordEnv(resource.getFilename(), persona.passwordEnv());
             personas.add(persona);
         }
         if (personas.isEmpty()) {
@@ -97,6 +101,13 @@ public class DemoProfileSeeder implements ApplicationRunner {
                 role,
                 Instant.now()));
         log.info("Demo portal user ready: email={}, role={}", normalizedEmail, role);
+    }
+
+    static void requireValidDemoPasswordEnv(String personaFixtureFile, String passwordEnv) {
+        if (passwordEnv == null || !DEMO_PASSWORD_ENV_PATTERN.matcher(passwordEnv).matches()) {
+            throw new IllegalStateException(
+                    "invalid passwordEnv in persona fixture " + personaFixtureFile + ": " + passwordEnv);
+        }
     }
 
     static String requirePassword(String propertyName, String value) {
