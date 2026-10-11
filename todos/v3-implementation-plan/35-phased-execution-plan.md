@@ -57,7 +57,7 @@ Estimated total: about the plan's 8 to 10 weeks part-time (01). Splitting phases
 
 ### Phase 0: Baseline & decisions (slice 0, 1 to 2 days)
 - **Deliverables**
-  - README: record the owner's permission (ADR-001) and credit the original author. The CI badge points at `sunilguntupalli/...`.
+  - README: record repository ownership and permission status (ADR-001). The CI badge points at `Hvmanker/insurance-claims-management-system`.
   - README: fix the port story. Compose publishes `8081:8081`, but the README says to open `localhost:8085/dashboard` and also lists `8081`. The README also claims that high-value claims are "rejected". `ApprovalService.evaluate` actually returns without deciding.
   - A verified-behavior note that cites files:
     - The AGENT role can decide any SUBMITTED claim and read all claims.
