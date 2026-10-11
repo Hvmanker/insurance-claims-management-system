@@ -1,20 +1,27 @@
 package com.sunil.insurance.claims.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sunil.insurance.claims.domain.PortalUser;
 import com.sunil.insurance.claims.domain.PortalUserRepository;
 import com.sunil.insurance.claims.domain.UserRole;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.env.Environment;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.time.Instant;
-import java.util.Locale;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
 
 @Component
 @Profile("demo")
@@ -28,24 +35,40 @@ public class DemoProfileSeeder implements ApplicationRunner {
 
     private final PortalUserRepository users;
     private final PasswordEncoder passwordEncoder;
-    private final String agentPassword;
-    private final String insuredPassword;
+    private final Environment environment;
+    private final ObjectMapper objectMapper;
 
     public DemoProfileSeeder(
             PortalUserRepository users,
             PasswordEncoder passwordEncoder,
-            @Value("${DEMO_AGENT_PASSWORD:}") String agentPassword,
-            @Value("${DEMO_INSURED_PASSWORD:}") String insuredPassword) {
+            Environment environment,
+            ObjectMapper objectMapper) {
         this.users = users;
         this.passwordEncoder = passwordEncoder;
-        this.agentPassword = requirePassword("DEMO_AGENT_PASSWORD", agentPassword);
-        this.insuredPassword = requirePassword("DEMO_INSURED_PASSWORD", insuredPassword);
+        this.environment = environment;
+        this.objectMapper = objectMapper;
     }
 
     @Override
-    public void run(ApplicationArguments args) {
-        seedUser(AGENT_ID, AGENT_EMAIL, "Morgan Rivera", UserRole.AGENT, agentPassword);
-        seedUser(INSURED_ID, INSURED_EMAIL, "Ava Thompson", UserRole.INSURED, insuredPassword);
+    public void run(ApplicationArguments args) throws IOException {
+        for (PersonaFixture persona : loadPersonaFixtures()) {
+            String rawPassword = requirePassword(persona.passwordEnv(), environment.getProperty(persona.passwordEnv()));
+            seedUser(persona.id(), persona.email(), persona.fullName(), persona.role(), rawPassword);
+        }
+    }
+
+    List<PersonaFixture> loadPersonaFixtures() throws IOException {
+        PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
+        Resource[] resources = resolver.getResources("classpath:fixtures/personas/*.json");
+        List<PersonaFixture> personas = new ArrayList<>();
+        for (Resource resource : resources) {
+            PersonaFixture persona = objectMapper.readValue(resource.getInputStream(), PersonaFixture.class);
+            if (persona.role() != null && persona.passwordEnv() != null) {
+                personas.add(persona);
+            }
+        }
+        personas.sort(Comparator.comparing(PersonaFixture::email));
+        return personas;
     }
 
     void seedUser(UUID id, String email, String fullName, UserRole role, String rawPassword) {
@@ -61,7 +84,7 @@ public class DemoProfileSeeder implements ApplicationRunner {
         log.info("Demo portal user ready: email={}, role={}", normalizedEmail, role);
     }
 
-    private static String requirePassword(String propertyName, String value) {
+    static String requirePassword(String propertyName, String value) {
         if (value == null || value.isBlank()) {
             throw new IllegalStateException(propertyName + " must be set when the demo profile is active");
         }

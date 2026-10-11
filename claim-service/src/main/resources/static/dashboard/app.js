@@ -5,6 +5,8 @@ var currencyFormatter = new Intl.NumberFormat("en-US", { style: "currency", curr
 var dateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 function message(id, text, isError) { var element = document.getElementById(id); element.textContent = text; element.classList.toggle("error", Boolean(isError)); }
+function roleDisplayName(role) { return role === "BROKER" ? "Agent" : role; }
+function isLegacyAgentWorkspace(role) { return role === "AGENT"; }
 function api(url, options) { return fetch(url, options).then(async function (response) { if (!response.ok) { var body = await response.json().catch(function () { return {}; }); throw new Error(body.detail || body.message || "Request could not be completed."); } return response.status === 204 ? null : response.json(); }); }
 function cell(text, className) { var element = document.createElement("td"); element.textContent = text; if (className) element.className = className; return element; }
 
@@ -14,11 +16,11 @@ function renderClaims() {
   var body = document.getElementById("claims-table-body"); body.replaceChildren();
   visible.forEach(function (claim) {
     var row = document.createElement("tr");
-    var primary = cell(currentUser.role === "AGENT" ? claim.claimantName : "Claim " + claim.id.slice(0, 8).toUpperCase(), "claimant");
+    var primary = cell(isLegacyAgentWorkspace(currentUser.role) ? claim.claimantName : "Claim " + claim.id.slice(0, 8).toUpperCase(), "claimant");
     var reason = cell(claim.claimType + " - " + claim.reason, "reason"); reason.title = claim.description;
     var status = document.createElement("td"); var badge = document.createElement("span"); badge.className = "status-badge " + claim.status; badge.textContent = claim.status; status.appendChild(badge);
     row.append(primary, cell(claim.policyNumber), reason, cell(currencyFormatter.format(claim.estimatedAmount), "money"), status, cell(dateFormatter.format(new Date(claim.submittedAt)), "date"));
-    var actions = document.createElement("td"); var viewButton = document.createElement("button"); viewButton.type = "button"; viewButton.className = "icon-button table-icon"; viewButton.setAttribute("aria-label", "Open claim details"); viewButton.title = "Open claim details"; viewButton.innerHTML = '<i data-lucide="file-search"></i>'; viewButton.addEventListener("click", function () { openClaim(claim); }); actions.appendChild(viewButton); if (currentUser.role === "AGENT" && claim.status === "SUBMITTED") { ["Approve", "Reject"].forEach(function (decision) { var button = document.createElement("button"); button.type = "button"; button.className = "decision-button " + decision.toLowerCase(); button.textContent = decision; button.addEventListener("click", function () { openDecision(claim, decision === "Approve"); }); actions.appendChild(button); }); } row.appendChild(actions);
+    var actions = document.createElement("td"); var viewButton = document.createElement("button"); viewButton.type = "button"; viewButton.className = "icon-button table-icon"; viewButton.setAttribute("aria-label", "Open claim details"); viewButton.title = "Open claim details"; viewButton.innerHTML = '<i data-lucide="file-search"></i>'; viewButton.addEventListener("click", function () { openClaim(claim); }); actions.appendChild(viewButton); if (isLegacyAgentWorkspace(currentUser.role) && claim.status === "SUBMITTED") { ["Approve", "Reject"].forEach(function (decision) { var button = document.createElement("button"); button.type = "button"; button.className = "decision-button " + decision.toLowerCase(); button.textContent = decision; button.addEventListener("click", function () { openDecision(claim, decision === "Approve"); }); actions.appendChild(button); }); } row.appendChild(actions);
     body.appendChild(row);
   });
   document.getElementById("empty-state").hidden = visible.length !== 0;
@@ -39,15 +41,15 @@ async function refreshPortal() {
 }
 function showPortal(user) {
   currentUser = user; document.getElementById("auth-view").hidden = true; document.getElementById("portal-view").hidden = false;
-  var agent = user.role === "AGENT";
-  document.getElementById("portal-role").textContent = agent ? "Agent workspace" : "Insured member portal";
+  var agent = isLegacyAgentWorkspace(user.role);
+  document.getElementById("portal-role").textContent = agent ? "Agent workspace" : (user.role === "BROKER" ? roleDisplayName(user.role) + " workspace" : "Insured member portal");
   document.getElementById("portal-title").textContent = agent ? "Claims operations" : "My claims";
   document.getElementById("queue-label").textContent = agent ? "Live queue" : "Your coverage";
   document.getElementById("queue-title").textContent = agent ? "Member claim activity" : "Claim activity";
   document.getElementById("exposure-label").textContent = agent ? "Estimated exposure" : "Claim value";
   document.getElementById("claimant-heading").textContent = agent ? "Member" : "Claim";
-  document.getElementById("user-name").textContent = user.fullName;
-  document.getElementById("submission-panel").hidden = agent;
+  document.getElementById("user-name").textContent = user.fullName + (user.role === "BROKER" ? " (" + roleDisplayName(user.role) + ")" : "");
+  document.getElementById("submission-panel").hidden = user.role !== "INSURED";
   refreshPortal();
 }
 function openDecision(claim, approved) { pendingDecision = { claim: claim, approved: approved }; document.getElementById("decision-title").textContent = approved ? "Approve claim" : "Reject claim"; document.getElementById("decision-claim").textContent = claim.claimantName + " - " + claim.policyNumber + " - " + currencyFormatter.format(claim.estimatedAmount); document.getElementById("decision-reason").value = ""; document.getElementById("confirm-decision").textContent = approved ? "Approve claim" : "Reject claim"; document.getElementById("decision-dialog").showModal(); }

@@ -1,0 +1,8 @@
+{
+  "brokerToInsured": [
+    {
+      "brokerEmail": "broker@insureflow.local",
+      "insuredEmail": "insured@insureflow.local"
+    }
+  ]
+}
