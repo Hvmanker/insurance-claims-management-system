@@ -27,9 +27,9 @@ Notification-service logs delivery outcomes and ids, never message content. Veri
 
 ## Secrets
 
-Move the README's seeded agent credential into an environment-driven seed profile. The public demo uses generated demo passwords. The hash already lives in `V2__add_portal_accounts_and_claim_reason.sql`; slice 0 must decide whether that committed hash stays for local seed or moves with the password. No new secrets in the repo, images, or logs.
+Move the README's seeded agent credential into an environment-driven seed profile. The public demo uses generated demo passwords. **Decided:** delete the bcrypt hash from `V2__add_portal_accounts_and_claim_reason.sql` in slice **0.4**; the `@Profile("demo")` seeder upserts users from env; the old README password is **burnt** and must not reappear in repo, images, or logs.
 
-Config comes from environment variables or a secrets file excluded from git. Add gitleaks to the pipeline in slice 5.
+Config comes from environment variables or a secrets file excluded from git. **gitleaks** enters the pipeline in slice **0** (`make ci`); slice **5A** extends CI with Trivy and Jenkins.
 
 Containers run as non-root with read-only filesystems where practical.
 

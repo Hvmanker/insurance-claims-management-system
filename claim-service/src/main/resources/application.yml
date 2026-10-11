@@ -11,8 +11,8 @@ spring:
     name: claim-service
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/claims}
-    username: ${DB_USERNAME:claims}
-    password: ${DB_PASSWORD:claims}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -29,6 +29,7 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
   cache:
     type: redis
   kafka:
