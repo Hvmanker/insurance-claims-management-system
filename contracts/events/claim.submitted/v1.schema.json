@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "claim.submitted v1",
+  "allOf": [
+    {
+      "$ref": "../../envelope.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "eventType": {
+          "const": "claim.submitted"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "claimId",
+            "policyNumber",
+            "claimantName",
+            "claimType",
+            "estimatedAmount",
+            "submittedAt",
+            "documents",
+            "policySnapshot"
+          ],
+          "properties": {
+            "claimId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "policyNumber": {
+              "type": "string",
+              "minLength": 1
+            },
+            "claimantName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "claimType": {
+              "type": "string",
+              "minLength": 1
+            },
+            "estimatedAmount": {
+              "$ref": "#/$defs/moneyAmount"
+            },
+            "submittedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "documents": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/documentReference"
+              }
+            },
+            "policySnapshot": {
+              "$ref": "#/$defs/policySnapshot"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "moneyAmount": {
+      "type": "string",
+      "pattern": "^\\d+(\\.\\d{1,2})?$"
+    },
+    "documentReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documentId", "storageKey", "contentType", "status"],
+      "properties": {
+        "documentId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "storageKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "const": "READY"
+        }
+      }
+    },
+    "policySnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coverageStart", "coverageEnd", "coverageLimit"],
+      "properties": {
+        "coverageStart": {
+          "type": "string",
+          "format": "date"
+        },
+        "coverageEnd": {
+          "type": "string",
+          "format": "date"
+        },
+        "coverageLimit": {
+          "$ref": "#/$defs/moneyAmount"
+        }
+      }
+    }
+  }
+}

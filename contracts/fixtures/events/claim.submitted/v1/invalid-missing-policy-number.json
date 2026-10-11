@@ -1,0 +1,29 @@
+{
+  "eventId": "a1000000-0000-4000-8000-000000000002",
+  "eventType": "claim.submitted",
+  "schemaVersion": 1,
+  "aggregateId": "b2000000-0000-4000-8000-000000000002",
+  "occurredAt": "2026-10-01T12:05:00Z",
+  "correlationId": "c3000000-0000-4000-8000-000000000002",
+  "causationId": null,
+  "payload": {
+    "claimId": "b2000000-0000-4000-8000-000000000002",
+    "claimantName": "Synthetic Driver B",
+    "claimType": "Auto",
+    "estimatedAmount": "1200.00",
+    "submittedAt": "2026-10-01T12:05:00Z",
+    "documents": [
+      {
+        "documentId": "d4000000-0000-4000-8000-000000000002",
+        "storageKey": "claims/b2000000/repair-estimate.pdf",
+        "contentType": "application/pdf",
+        "status": "READY"
+      }
+    ],
+    "policySnapshot": {
+      "coverageStart": "2025-01-01",
+      "coverageEnd": "2026-12-31",
+      "coverageLimit": "50000.00"
+    }
+  }
+}

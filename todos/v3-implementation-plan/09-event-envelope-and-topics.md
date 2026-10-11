@@ -8,18 +8,38 @@ Events are at-least-once with idempotent effects. This plan does not claim exact
 
 ## Envelope
 
-Every event carries:
+Every event is a JSON object with `additionalProperties: false` and these required fields (see `contracts/envelope.schema.json`):
 
-- `eventId`
-- `eventType`
-- `schemaVersion`
-- `aggregateId`
-- `occurredAt`
-- `correlationId`
-- `causationId`
-- a minimal, non-sensitive payload
+- `eventId` (UUID)
+- `eventType` (string; matches the topic / schema)
+- `schemaVersion` (integer; `1` for the v1 event schemas in this slice)
+- `aggregateId` (UUID; the claim id)
+- `occurredAt` (RFC 3339 date-time)
+- `correlationId` (UUID)
+- `causationId` (UUID or `null` when there is no parent event)
+- `payload` (object; event-specific, `additionalProperties: false` in each v1 schema)
 
-The Kafka key is the claim id. That preserves per-claim ordering inside a topic.
+The envelope does not carry a `producer` field. Producers are documented in the topics table only.
+
+The Kafka key is the claim id (`aggregateId`). That preserves per-claim ordering inside a topic.
+
+### `claim.decided` decision values
+
+On the wire, `payload.decision` is lower-case: `approved`, `rejected`, or `more-info`. **`MORE_INFO_REQUESTED` is a claim status** in the read model; **`more-info` is the decision value** on `claim.decided` that leads to that status. Do not put status enum names on the event.
+
+Legacy Java today uses upper-case `ApprovalDecision` (`APPROVED`, `REJECTED`) on approval rows and split topics (`claim.approved`, `claim.rejected`, `claim.manual-decision`). When those paths are unified onto `claim.decided`, map `APPROVED` → `approved`, `REJECTED` → `rejected`, and adjuster request-more-info → `more-info`. The JSON contract stays lower-case; do not change the Java enum in slice 0.
+
+### Analysis worker field names (auto repair)
+
+`claim.analysis.completed` uses auto-damage repair-estimate terms in `contracts/` (ADR-002), not the withdrawn medical names in [14-analysis-worker-contract.md](14-analysis-worker-contract.md):
+
+| Contract field | Earlier medical draft (doc 14) |
+| --- | --- |
+| `estimateNumber` | `invoice_number` |
+| `repairShopName` | `provider_name` |
+| `dateOfLoss` | `date_of_service` |
+| `estimateTotal` | `billed_amount` (with currency) |
+| `DUPLICATE_ESTIMATE_NUMBER` flag | `DUPLICATE_INVOICE_NUMBER` |
 
 ## Source of truth
 
@@ -34,6 +54,8 @@ Payloads omit document bytes, prompts, and free-form personal data. Document eve
 | `claim.submitted` | claim-service | analysis worker | Claim and document references plus policy snapshot |
 | `claim.analysis.completed` | analysis worker | approval-service | Extracted facts, confidence, evidence, flags |
 | `claim.decided` | approval-service | claim-service, settlement-service, notifications | Approved, rejected, or more-info decision |
+| `claim.info.provided` | claim-service | approval-service | Insured uploaded documents in response to a more-info request (fixtures in Phase 1A) |
+| `claim.analysis.requested` | approval-service | analysis worker | Approval-service moved the claim back to analysis after more info (fixtures in Phase 1A) |
 | `settlement.simulated` | settlement-service | claim-service, notifications | Simulated settlement record |
 | `<topic>.DLT` | consumer error handler | operator replay command | Failed events with sanitized error metadata |
 

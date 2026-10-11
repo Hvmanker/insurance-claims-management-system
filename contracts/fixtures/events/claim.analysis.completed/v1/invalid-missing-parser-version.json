@@ -1,0 +1,64 @@
+{
+  "eventId": "a1000000-0000-4000-8000-000000000012",
+  "eventType": "claim.analysis.completed",
+  "schemaVersion": 1,
+  "aggregateId": "b2000000-0000-4000-8000-000000000012",
+  "occurredAt": "2026-10-01T12:35:00Z",
+  "correlationId": "c3000000-0000-4000-8000-000000000012",
+  "causationId": null,
+  "payload": {
+    "claimId": "b2000000-0000-4000-8000-000000000012",
+    "extracted": {
+      "estimateNumber": {
+        "value": "EST-90001",
+        "confidence": 0.5,
+        "evidence": {
+          "page": 1,
+          "textSpan": "EST-90001"
+        }
+      },
+      "repairShopName": {
+        "value": "Demo Body Shop",
+        "confidence": 0.5,
+        "evidence": {
+          "page": 1,
+          "textSpan": "Demo Body Shop"
+        }
+      },
+      "dateOfLoss": {
+        "value": "2026-09-01",
+        "confidence": 0.5,
+        "evidence": {
+          "page": 1,
+          "textSpan": "2026-09-01"
+        }
+      },
+      "lineItems": {
+        "value": [
+          {
+            "description": "Labor",
+            "amount": "100.00"
+          }
+        ],
+        "confidence": 0.5,
+        "evidence": {
+          "page": 1,
+          "textSpan": "Labor"
+        }
+      },
+      "estimateTotal": {
+        "value": {
+          "amount": "100.00",
+          "currency": "USD"
+        },
+        "confidence": 0.5,
+        "evidence": {
+          "page": 1,
+          "textSpan": "100.00"
+        }
+      }
+    },
+    "flags": [],
+    "modelVersion": "stub/0.0.0"
+  }
+}

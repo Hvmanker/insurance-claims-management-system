@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "settlement.simulated v1",
+  "allOf": [
+    {
+      "$ref": "../../envelope.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "eventType": {
+          "const": "settlement.simulated"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "claimId",
+            "settlementId",
+            "policyNumber",
+            "paidAmount",
+            "settledAt"
+          ],
+          "properties": {
+            "claimId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "settlementId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "policyNumber": {
+              "type": "string",
+              "minLength": 1
+            },
+            "paidAmount": {
+              "type": "string",
+              "pattern": "^\\d+(\\.\\d{1,2})?$"
+            },
+            "settledAt": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "eventId": "a1000000-0000-4000-8000-000000000024",
+  "eventType": "claim.decided",
+  "schemaVersion": 1,
+  "aggregateId": "b2000000-0000-4000-8000-000000000024",
+  "occurredAt": "2026-10-01T13:15:00Z",
+  "correlationId": "c3000000-0000-4000-8000-000000000024",
+  "causationId": null,
+  "payload": {
+    "claimId": "b2000000-0000-4000-8000-000000000024",
+    "policyNumber": "SYN-AUTO-1024",
+    "decision": "more-info",
+    "decidedAt": "2026-10-01T13:15:00Z",
+    "decidedBy": "adjuster.demo",
+    "approvedAmount": null,
+    "reason": "Upload rear bumper close-up",
+    "riskScore": 0.12
+  }
+}
