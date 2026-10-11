@@ -6,7 +6,7 @@ Spring Boot microservices implementation for claim submission, approval, settlem
 
 ## Attribution
 
-This repository extends the original [insurance-claims-management-system](https://github.com/sunilguntupalli/insurance-claims-management-system) project by **sunilguntupalli** on GitHub. The current owner has permission to extend and evolve this codebase for the InsureFlow demo (see [ADR-001](todos/architecture-decisions/ADR-001-extend-existing-repo.md)).
+This repository extends the original [insurance-claims-management-system](https://github.com/sunilguntupalli/insurance-claims-management-system) project by **sunilguntupalli** on GitHub. Repository owner **[Hvmanker](https://github.com/Hvmanker)** is extending this codebase for the InsureFlow demo; owner permission is pending confirmation (see [ADR-001](todos/architecture-decisions/ADR-001-extend-existing-repo.md)).
 
 ## Architecture
 

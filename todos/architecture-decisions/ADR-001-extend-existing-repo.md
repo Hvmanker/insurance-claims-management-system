@@ -12,7 +12,7 @@ Accepted as a plan decision. The product changes are not built yet.
 
 The insurance claims repository already runs four Spring Boot services, PostgreSQL, Kafka, Redis cache, and a small portal. A rewrite would take one to two weeks and discard a working baseline.
 
-**Owner permission (recorded):** **Hvmanker** (repository owner, `hvmanker@gmail.com` in git history) has confirmed permission to extend this repository for the InsureFlow auto-claims demo rather than maintaining a parallel rewrite.
+**Owner permission:** pending confirmation by **Hvmanker**.
 
 **Original work:** The baseline implementation was authored by **sunilguntupalli** ([`sunilguntupalli/insurance-claims-management-system`](https://github.com/sunilguntupalli/insurance-claims-management-system) on GitHub), as reflected in the prior README CI badge and `com.sunil.insurance` package namespace. Slice 0.9 credits that upstream project in this repo's README.
 
@@ -28,7 +28,7 @@ Cost: avoiding a rewrite is the main saving. No new vendor.
 
 ## Decision
 
-Extend this repository. Do not start a parallel codebase. Slice 0.9 records the owner's permission and upstream author credit in the README and this ADR, and audits current behavior before feature work.
+Extend this repository. Do not start a parallel codebase. Slice 0.9 documents owner permission status and upstream author credit in the README and this ADR, and audits current behavior before feature work.
 
 ## Alternatives Considered
 
