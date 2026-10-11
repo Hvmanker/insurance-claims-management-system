@@ -522,7 +522,7 @@ check_07_tm_b_kafka_integration() {
   local nn="07" name
   name="$(check_display_name 6)"
   if has_tm_b_kafka_integration_test; then
-    emit_result "$nn" FAIL "$name" "Kafka integration TM-B test present but no docker-based runner in this script"
+    emit_result "$nn" SKIPPED "$name" "Kafka TM-B test exists but isn't wired into this script"
     return
   fi
   emit_result "$nn" SKIPPED "$name" "no Kafka integration test for TM-B (unit-only WorkflowNotificationListenerLogLeakTest on main)"

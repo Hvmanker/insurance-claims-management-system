@@ -60,7 +60,7 @@ The authoritative names and order live in the `CHECKS` array inside `phase0-runt
 4. Flyway on fresh Postgres; `portal_users` empty without `demo` profile
 5. Demo sign-in after `down -v` and `up` with `demo` profile
 6. Live TM-A cache authorization (curl + real Redis)
-7. TM-B Kafka integration (SKIPPED if only unit tests exist)
+7. TM-B Kafka integration (always SKIPPED here: no unit-only PASS; either `no Kafka integration test for TM-B…` or `Kafka TM-B test exists but isn't wired into this script`)
 8. Late `claim.decided` e2e (SKIPPED: `consumers not yet on the contract envelope (1A)`)
 9. Duplicate `eventId` e2e (SKIPPED: `consumers not yet on the contract envelope (1A)`)
 10. 5200.00 vs 5180.00 reconciliation (SKIPPED: `consumers not yet on the contract envelope (1A)`)
