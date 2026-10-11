@@ -8,11 +8,11 @@
 
 ## Direct answer: AGENT review/decide on claims it did not submit
 
-**Yes — an AGENT user can review and decide claims it did not submit.** Only `INSURED` may call `submit` (`claim-service/src/main/java/.../insurance/claims/service/ClaimService.java:46-48`). `decide` requires `UserRole.AGENT` and loads the claim by id with no owner check (`ClaimService.java:126-131`). Visibility for reads uses `findVisibleClaim`, which returns any claim by id for `AGENT` (`ClaimService.java:165-168`). List and dashboard paths expose all claims to `AGENT` via `findTop50ByOrderBySubmittedAtDesc` / `findAll` (`ClaimService.java:82-84`, `ClaimService.java:98-100`).
+**Yes — an AGENT user can review and decide claims it did not submit.** Only `INSURED` may call `submit` (`claim-service/src/main/java/com/hvmanker/insurance/claims/service/ClaimService.java:46-48`). `decide` requires `UserRole.AGENT` and loads the claim by id with no owner check (`ClaimService.java:126-131`). Visibility for reads uses `findVisibleClaim`, which returns any claim by id for `AGENT` (`ClaimService.java:165-168`). List and dashboard paths expose all claims to `AGENT` via `findTop50ByOrderBySubmittedAtDesc` / `findAll` (`ClaimService.java:82-84`, `ClaimService.java:98-100`).
 
 Under the product owner’s rule, **today’s `UserRole.AGENT` corresponds to ADJUSTER** (not broker). Renaming/migrating that meaning is **deferred to Phase 1B** via an **additive** Flyway migration; Phase 0 does not change role enums or permission checks.
 
-**Authority limits:** The legacy `AGENT` role can currently **decide any claim in `SUBMITTED` status with no amount limit** — `decide` only checks `UserRole.AGENT`, loads the claim by id, and requires `ClaimStatus.SUBMITTED`; it does not compare `estimatedAmount` to any threshold or cap the decision amount (`ClaimService.java:126-134`, `ClaimService.java:135-140`). `ManualDecisionRequest` carries only `approved` and `reason`, not an amount (`claim-service/src/main/java/.../insurance/claims/web/ManualDecisionRequest.java:7-10`). **This remains true until authority limits are enforced in Phase 6A** (planned **ADR-018**), including ADR-018 rules that **only `SUPERVISOR` may decide `ESCALATED` claims** and **gated reject-over-limit** behavior — none of that applies in the baseline code.
+**Authority limits:** The legacy `AGENT` role can currently **decide any claim in `SUBMITTED` status with no amount limit** — `decide` only checks `UserRole.AGENT`, loads the claim by id, and requires `ClaimStatus.SUBMITTED`; it does not compare `estimatedAmount` to any threshold or cap the decision amount (`ClaimService.java:126-134`, `ClaimService.java:135-140`). `ManualDecisionRequest` carries only `approved` and `reason`, not an amount (`claim-service/src/main/java/com/hvmanker/insurance/claims/web/ManualDecisionRequest.java:7-10`). **This remains true until authority limits are enforced in Phase 6A** (planned **ADR-018**), including ADR-018 rules that **only `SUPERVISOR` may decide `ESCALATED` claims** and **gated reject-over-limit** behavior — none of that applies in the baseline code.
 
 ---
 
@@ -42,24 +42,24 @@ Under the product owner’s rule, **today’s `UserRole.AGENT` corresponds to AD
 
 | Claim | Verified | Citation |
 |-------|----------|----------|
-| CSRF disabled | Yes | `claim-service/src/main/java/.../insurance/claims/config/SecurityConfig.java:27` |
+| CSRF disabled | Yes | `claim-service/src/main/java/com/hvmanker/insurance/claims/config/SecurityConfig.java:27` |
 | `anyRequest().permitAll()` | Yes | `SecurityConfig.java:28` |
 | BCrypt strength 12 | Yes | `SecurityConfig.java:37` |
-| Claim API requires authentication | Yes | `claim-service/src/main/java/.../insurance/claims/web/ClaimController.java:22` (`@PreAuthorize("isAuthenticated()")` on the controller) |
-| `/api/auth/me` requires authentication | Yes | `claim-service/src/main/java/.../insurance/claims/web/AuthController.java:47-48` |
+| Claim API requires authentication | Yes | `claim-service/src/main/java/com/hvmanker/insurance/claims/web/ClaimController.java:22` (`@PreAuthorize("isAuthenticated()")` on the controller) |
+| `/api/auth/me` requires authentication | Yes | `claim-service/src/main/java/com/hvmanker/insurance/claims/web/AuthController.java:47-48` |
 | Register/login are not `@PreAuthorize` | Yes (plan shorthand) | `AuthController.java:35-44` — public at filter level because of `permitAll()` |
 
 **Correction vs plan wording:** The audit said “the controller” only has `isAuthenticated()`; in code, **`ClaimController` is class-scoped** and **`AuthController` only protects `/api/auth/me`**. Register and login are open at the HTTP-security layer.
 
 ### Domain: `ClaimStatus`
 
-Four values: `SUBMITTED`, `APPROVED`, `REJECTED`, `SETTLED` — `common/src/main/java/.../insurance/common/ClaimStatus.java:4-7`.
+Four values: `SUBMITTED`, `APPROVED`, `REJECTED`, `SETTLED` — `common/src/main/java/com/hvmanker/insurance/common/ClaimStatus.java:4-7`.
 
 ### Kafka topic names (`KafkaTopics`)
 
 | Constant | Topic string | Citation |
 |----------|--------------|----------|
-| `CLAIM_SUBMITTED` | `claim.submitted` | `common/src/main/java/.../insurance/common/KafkaTopics.java:4` |
+| `CLAIM_SUBMITTED` | `claim.submitted` | `common/src/main/java/com/hvmanker/insurance/common/KafkaTopics.java:4` |
 | `CLAIM_APPROVED` | `claim.approved` | `KafkaTopics.java:5` |
 | `CLAIM_REJECTED` | `claim.rejected` | `KafkaTopics.java:6` |
 | `CLAIM_SETTLED` | `claim.settled` | `KafkaTopics.java:7` |
@@ -71,9 +71,9 @@ Producers use `KafkaTemplate` directly; there is **no** outbox table or outbox p
 
 | Service | Mechanism | Citation |
 |---------|-----------|----------|
-| claim-service | `ClaimEventPublisher` → `kafkaTemplate.send(...).get()` | `claim-service/src/main/java/.../insurance/claims/config/ClaimEventPublisher.java:27-29` |
-| approval-service | `ApprovalService` → `kafkaTemplate.send` | `approval-service/src/main/java/.../insurance/approval/service/ApprovalService.java:73-78`, `ApprovalService.java:83-88` |
-| settlement-service | `SettlementService` → `kafkaTemplate` | `settlement-service/src/main/java/.../insurance/settlement/service/SettlementService.java:19`, publish path in same file |
+| claim-service | `ClaimEventPublisher` → `kafkaTemplate.send(...).get()` | `claim-service/src/main/java/com/hvmanker/insurance/claims/config/ClaimEventPublisher.java:27-29` |
+| approval-service | `ApprovalService` → `kafkaTemplate.send` | `approval-service/src/main/java/com/hvmanker/insurance/approval/service/ApprovalService.java:73-78`, `ApprovalService.java:83-88` |
+| settlement-service | `SettlementService` → `kafkaTemplate` | `settlement-service/src/main/java/com/hvmanker/insurance/settlement/service/SettlementService.java:19`, publish path in same file |
 
 ### Flyway migrations
 
@@ -91,7 +91,7 @@ V2 inserts `agent@insureflow.local` with role `AGENT` and a BCrypt `password_has
 
 ### High-value claims vs README
 
-Code: over-limit submitted claims are **not** auto-rejected; approval service returns without publishing (`approval-service/src/main/java/.../insurance/approval/service/ApprovalService.java:59-61`). Claim row stays `SUBMITTED` until manual agent decision.
+Code: over-limit submitted claims are **not** auto-rejected; approval service returns without publishing (`approval-service/src/main/java/com/hvmanker/insurance/approval/service/ApprovalService.java:59-61`). Claim row stays `SUBMITTED` until manual agent decision.
 
 README incorrectly states higher-value claims “are rejected” (`README.md:90`) and step 4 refers to a “rejection path” for >$10k (`README.md:97`) — **doc bug**; fix in subtask 0.9 / TM-D.
 
@@ -99,7 +99,7 @@ README incorrectly states higher-value claims “are rejected” (`README.md:90`
 
 `WorkflowNotificationListener` logs policy numbers, rejection reasons, and amounts:
 
-- Approved: `policyNumber`, `approvedAmount` — `notification-service/src/main/java/.../insurance/notification/messaging/WorkflowNotificationListener.java:21`
+- Approved: `policyNumber`, `approvedAmount` — `notification-service/src/main/java/com/hvmanker/insurance/notification/messaging/WorkflowNotificationListener.java:21`
 - Rejected: `policyNumber`, `reason` — `WorkflowNotificationListener.java:26`
 - Settled: `paidAmount` — `WorkflowNotificationListener.java:31`
 
@@ -138,7 +138,7 @@ Fix targeted in Phase 0.5 (TM-B).
 |-------|----------|----------|
 | `mvn --batch-mode verify` on PR/push | Yes | `.github/workflows/ci.yml:21` |
 | `docker compose build` job | Yes | `.github/workflows/ci.yml:32-33` |
-| Only Java test class in repo | Yes | sole `*Test.java`: `approval-service/src/test/java/.../insurance/approval/service/ApprovalServiceTest.java` |
+| Only Java test class in repo | Yes | sole `*Test.java`: `approval-service/src/test/java/com/hvmanker/insurance/approval/service/ApprovalServiceTest.java` |
 
 **Approved for Phase 0.10:** `make ci` wrapping verify, compose config checks, and **gitleaks** with a **text-search fallback** for bcrypt/`$2[aby]$` patterns if gitleaks is unavailable.
 
@@ -155,9 +155,9 @@ rg -n "log\.(info|warn|error|debug)" --type java
 Output:
 
 ```text
-notification-service/src/main/java/.../insurance/notification/messaging/WorkflowNotificationListener.java:21:        log.info("Notification queued: claim {} for policy {} approved for {}", event.claimId(), event.policyNumber(), event.approvedAmount());
-notification-service/src/main/java/.../insurance/notification/messaging/WorkflowNotificationListener.java:26:        log.info("Notification queued: claim {} for policy {} rejected: {}", event.claimId(), event.policyNumber(), event.reason());
-notification-service/src/main/java/.../insurance/notification/messaging/WorkflowNotificationListener.java:31:        log.info("Notification queued: claim {} settled with payment {}", event.claimId(), event.paidAmount());
+notification-service/src/main/java/com/hvmanker/insurance/notification/messaging/WorkflowNotificationListener.java:21:        log.info("Notification queued: claim {} for policy {} approved for {}", event.claimId(), event.policyNumber(), event.approvedAmount());
+notification-service/src/main/java/com/hvmanker/insurance/notification/messaging/WorkflowNotificationListener.java:26:        log.info("Notification queued: claim {} for policy {} rejected: {}", event.claimId(), event.policyNumber(), event.reason());
+notification-service/src/main/java/com/hvmanker/insurance/notification/messaging/WorkflowNotificationListener.java:31:        log.info("Notification queued: claim {} settled with payment {}", event.claimId(), event.paidAmount());
 ```
 
 No other Java log calls at HEAD.

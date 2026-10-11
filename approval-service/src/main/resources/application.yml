@@ -30,8 +30,8 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: com.sunil.insurance.common.events
-        spring.json.value.default.type: com.sunil.insurance.common.events.ClaimSubmittedEvent
+        spring.json.trusted.packages: com.hvmanker.insurance.common.events
+        spring.json.value.default.type: com.hvmanker.insurance.common.events.ClaimSubmittedEvent
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
