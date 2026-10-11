@@ -49,4 +49,5 @@ public class PortalUser {
     public String getFullName() { return fullName; }
     public String getPasswordHash() { return passwordHash; }
     public UserRole getRole() { return role; }
+    public Instant getCreatedAt() { return createdAt; }
 }
