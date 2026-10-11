@@ -130,4 +130,4 @@ Docker Compose publishes only **claim-service** on host port **8081** (approval,
 
 The services use one PostgreSQL database for local development, with each data-owning service isolated in its own schema and managing that schema through Flyway migrations. A production deployment can split these schemas into separate databases.
 
-`claim-service` owns the portal authentication boundary. It uses Spring Security sessions, BCrypt password hashing, role-aware access (`INSURED` and `AGENT`), and claim ownership checks. Agents can review the full operational queue; insured members can only access their own claims.
+`claim-service` owns the portal authentication boundary. It uses Spring Security sessions, BCrypt password hashing, and role-aware access: only **INSURED** (own claims) and the legacy **AGENT** (all claims) are active today. **BROKER**, **ADJUSTER**, **SUPERVISOR**, **SIU**, **FINANCE**, **AUDITOR**, and **ADMIN** exist since slice 0.6 but are inert—they see no claims, get 404 on get, and 403 on decide until later phases grant access.
