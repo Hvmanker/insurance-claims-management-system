@@ -1,6 +1,7 @@
 package com.hvmanker.insurance.claims.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hvmanker.insurance.common.PortalPasswordValidator;
 import com.hvmanker.insurance.claims.domain.PortalUser;
 import com.hvmanker.insurance.claims.domain.PortalUserRepository;
 import com.hvmanker.insurance.claims.domain.UserRole;
@@ -111,9 +112,6 @@ public class DemoProfileSeeder implements ApplicationRunner {
     }
 
     static String requirePassword(String propertyName, String value) {
-        if (value == null || value.isBlank()) {
-            throw new IllegalStateException(propertyName + " must be set when the demo profile is active");
-        }
-        return value;
+        return PortalPasswordValidator.requireForDemoEnvironment(propertyName, value);
     }
 }

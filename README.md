@@ -56,6 +56,7 @@ Copy environment variables from the example file, set strong passwords for the r
 ```bash
 cp .env.example .env
 # Edit `.env` and replace placeholder passwords before starting the stack.
+# `.env.example` DEMO_* values are placeholders only—they do not meet portal password rules (length 12–72, upper, lower, digit). Replace every DEMO_*_PASSWORD with your own values that satisfy those rules before enabling the `demo` profile, or the seeder will fail and you cannot sign in with the example strings.
 docker compose up --build
 ```
 
