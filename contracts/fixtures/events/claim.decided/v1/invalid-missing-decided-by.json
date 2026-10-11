@@ -1,0 +1,17 @@
+{
+  "eventId": "a1000000-0000-4000-8000-000000000023",
+  "eventType": "claim.decided",
+  "schemaVersion": 1,
+  "aggregateId": "b2000000-0000-4000-8000-000000000023",
+  "occurredAt": "2026-10-01T13:10:00Z",
+  "correlationId": "c3000000-0000-4000-8000-000000000023",
+  "causationId": null,
+  "payload": {
+    "claimId": "b2000000-0000-4000-8000-000000000023",
+    "policyNumber": "SYN-AUTO-1023",
+    "decision": "rejected",
+    "decidedAt": "2026-10-01T13:10:00Z",
+    "approvedAmount": null,
+    "reason": "Policy not in force"
+  }
+}
