@@ -1,8 +1,25 @@
 # Insurance Claims Management System
 
+[![CI](https://github.com/sunilguntupalli/insurance-claims-management-system/actions/workflows/ci.yml/badge.svg)](https://github.com/sunilguntupalli/insurance-claims-management-system/actions/workflows/ci.yml)
+
 Spring Boot microservices implementation for claim submission, approval, settlement, and notification workflows.
 
 ## Architecture
+
+```mermaid
+flowchart LR
+    Portal[Insured / agent portal] --> Claims[Claim service]
+    Claims --> ClaimsDB[(Claims schema)]
+    Claims --> Redis[(Redis)]
+    Claims --> Kafka[(Kafka)]
+    Kafka --> Approval[Approval service]
+    Approval --> ApprovalDB[(Approval schema)]
+    Approval --> Kafka
+    Kafka --> Settlement[Settlement service]
+    Settlement --> SettlementDB[(Settlement schema)]
+    Settlement --> Kafka
+    Kafka --> Notifications[Notification service]
+```
 
 - `claim-service` exposes REST APIs for claim submission and lookup, persists claims in PostgreSQL, caches claim reads in Redis, and publishes `claim.submitted` Kafka events.
 - `approval-service` consumes submitted claims, applies an auto-approval rule, records the decision, and publishes approved or rejected events.
@@ -86,6 +103,10 @@ curl http://localhost:8082/actuator/health
 curl http://localhost:8083/actuator/health
 curl http://localhost:8084/actuator/health
 ```
+
+## Continuous Integration
+
+GitHub Actions runs the approval-policy unit tests, compiles every Maven module on Java 21, and validates the complete Docker Compose build for each push and pull request.
 
 ## Service Ports
 
