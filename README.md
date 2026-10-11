@@ -47,6 +47,8 @@ Install Java 21, Maven, and Docker, then build the service jars:
 mvn clean package
 ```
 
+After the package/groupId rename to `com.hvmanker.insurance`, run `mvn -U clean install` once so your local `~/.m2` does not resolve outdated cached modules.
+
 Copy environment variables from the example file, set strong passwords for the required variables, then start the infrastructure and services:
 
 ```bash
