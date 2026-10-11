@@ -28,3 +28,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: docker compose --env-file .env.example build
+      - name: Verify persona fixtures packaged in claim-service image
+        run: |
+          set -euo pipefail
+          image_id="$(docker compose --env-file .env.example images -q claim-service)"
+          if [ -z "$image_id" ]; then
+            echo "claim-service image not found after compose build"
+            exit 1
+          fi
+          cid="$(docker create "$image_id")"
+          docker cp "$cid:/app/app.jar" /tmp/cs.jar
+          docker rm "$cid"
+          mapfile -t persona_json < <(unzip -l /tmp/cs.jar | awk '/BOOT-INF\/classes\/fixtures\/personas\/.*\.json$/ {print $4}')
+          count="${#persona_json[@]}"
+          echo "Persona fixture JSON entries (${count}):"
+          printf '%s\n' "${persona_json[@]}"
+          if [ "$count" -ne 10 ]; then
+            echo "Expected 10 persona fixture JSON files under BOOT-INF/classes/fixtures/personas/, found ${count}"
+            exit 1
+          fi

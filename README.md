@@ -63,9 +63,16 @@ docker compose up --build
 
 ```bash
 SPRING_PROFILES_ACTIVE=demo
+# All nine variables below are required when `demo` is active (one per seeded persona; see fixture `passwordEnv` fields).
+DEMO_ADJUSTER_PASSWORD=replace-with-strong-demo-adjuster-password
+DEMO_ADMIN_PASSWORD=replace-with-strong-demo-admin-password
 DEMO_AGENT_PASSWORD=replace-with-strong-demo-agent-password
+DEMO_AUDITOR_PASSWORD=replace-with-strong-demo-auditor-password
+DEMO_BROKER_PASSWORD=replace-with-strong-demo-broker-password
+DEMO_FINANCE_PASSWORD=replace-with-strong-demo-finance-password
 DEMO_INSURED_PASSWORD=replace-with-strong-demo-insured-password
-# Set the other DEMO_* passwords listed in `.env.example` if you use those personas.
+DEMO_SIU_PASSWORD=replace-with-strong-demo-siu-password
+DEMO_SUPERVISOR_PASSWORD=replace-with-strong-demo-supervisor-password
 ```
 
 Demo portal users (when the profile is active) include legacy agent `agent@insureflow.local` and insured `insured@insureflow.local`. Persona definitions (email, role, and `passwordEnv` property names—never password values) live in `claim-service/src/main/resources/fixtures/personas/`; broker–insured link metadata is under `fixtures/personas/links/`. Both are packaged on the claim-service classpath. Use only the `DEMO_*` values from your `.env` file—never commit real passwords. Without the `demo` profile, `portal_users` stays empty until someone registers through the portal.
