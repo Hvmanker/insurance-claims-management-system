@@ -128,6 +128,31 @@ Claims at or below `AUTO_APPROVAL_LIMIT` are approved automatically and flow to 
 curl http://localhost:8081/actuator/health
 ```
 
+## Phase 0 runtime gate
+
+The Phase 0 throwaway gate script lives at `scripts/phase0-runtime-check.sh`. It only runs against a dedicated Compose project name:
+
+```bash
+export COMPOSE_PROJECT=phase0check
+./scripts/phase0-runtime-check.sh
+```
+
+Copy `.env` from `.env.example` and configure secrets first. When the `demo` profile is enabled in `.env`, every `DEMO_*_PASSWORD` referenced by persona fixtures must be set (non-empty) before the script starts Docker; the gate does not validate password strength. Portal registration and the demo profile seeder both enforce the same rules: password length 12–72 characters, at least one uppercase letter, one lowercase letter, and one digit (`RegisterRequest` in claim-service).
+
+Docker-less smoke tests for shared helpers accept `PHASE0_ALLOW_SKIP=1` when the real `docker compose` CLI is not installed; without it, the stub test fails fast.
+
+```bash
+bash scripts/phase0-runtime-check-stubtest.sh
+```
+
+**Opt-in: leave stacks and volumes for inspection (`PHASE0_NO_TEARDOWN=1`).** Default behaviour is unchanged: the script tears down the throwaway project with `compose down -v` and deletes temporary files on exit. When you set `PHASE0_NO_TEARDOWN=1`, it never runs `compose down`, `compose down -v`, `docker volume rm`, or `rm -f` on gate temp files (cleanup only logs paths left behind). Each major bring-up uses a fresh Compose project name `${COMPOSE_PROJECT}-<UTC timestamp>-<phase>` for the initial startup, check 04 (`c04`), and check 05 (`c05`), so those phases get isolated volumes. Before each new `up`, the script runs `compose stop` only on the previous project created in this run (or the literal plain `phase0check` once at startup) to free host port 8081. `COMPOSE_PROJECT` must match `^phase0check(-[0-9a-z_-]+)?$` (lowercase suffix only); the `phase0check-<suffix>` form is allowed only in this mode. Per-phase project names share one lowercase UTC timestamp (`%Y%m%dt%H%M%Sz`) for startup, c04, and c05; all three names are checked against the regex and `docker compose -p <name> config -q` before any `compose stop` or `up`. Before each phase the log records the active project and its volume names (`docker volume ls --filter label=com.docker.compose.project=<name>`). The last project stays running at exit; the closing note prints that project name, `docker compose -p <name> logs claim-service`, stopped projects, and per-project volume lists.
+
+```bash
+export COMPOSE_PROJECT=phase0check
+export PHASE0_NO_TEARDOWN=1
+./scripts/phase0-runtime-check.sh
+```
+
 ## Continuous Integration
 
 GitHub Actions runs the approval-policy unit tests, compiles every Maven module on Java 21, and validates the complete Docker Compose build for each push and pull request.
