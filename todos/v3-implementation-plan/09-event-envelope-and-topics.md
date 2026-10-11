@@ -8,7 +8,7 @@ Events are at-least-once with idempotent effects. This plan does not claim exact
 
 ## Envelope
 
-Every event is a JSON object with `additionalProperties: false` and these required fields (see `contracts/envelope.schema.json`):
+Every event is a JSON object with `additionalProperties: false` and these required fields (see `contracts/envelope.schema.json`). Adding any new envelope field requires a new `schemaVersion` and a coordinated update of every producer and consumer; the closed envelope is deliberate, not an oversight.
 
 - `eventId` (UUID)
 - `eventType` (string; matches the topic / schema)
