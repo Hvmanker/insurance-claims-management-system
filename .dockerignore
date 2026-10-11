@@ -1,4 +1,6 @@
 .git
-**/.git
-**/target
-target
+target/
+**/target/
+.env
+.env.*
+!.env.example
