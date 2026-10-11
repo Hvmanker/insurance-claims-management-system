@@ -18,17 +18,17 @@ public class WorkflowNotificationListener {
 
     @KafkaListener(topics = CLAIM_APPROVED, groupId = "notification-service-approved")
     public void onApproved(ClaimApprovedEvent event) {
-        log.info("Notification queued: claim {} for policy {} approved for {}", event.claimId(), event.policyNumber(), event.approvedAmount());
+        log.info("Notification queued: claimId={}, eventType={}", event.claimId(), CLAIM_APPROVED);
     }
 
     @KafkaListener(topics = CLAIM_REJECTED, groupId = "notification-service-rejected")
     public void onRejected(ClaimRejectedEvent event) {
-        log.info("Notification queued: claim {} for policy {} rejected: {}", event.claimId(), event.policyNumber(), event.reason());
+        log.info("Notification queued: claimId={}, eventType={}", event.claimId(), CLAIM_REJECTED);
     }
 
     @KafkaListener(topics = CLAIM_SETTLED, groupId = "notification-service-settled")
     public void onSettled(ClaimSettledEvent event) {
-        log.info("Notification queued: claim {} settled with payment {}", event.claimId(), event.paidAmount());
+        log.info("Notification queued: claimId={}, eventType={}", event.claimId(), CLAIM_SETTLED);
     }
 }
 
