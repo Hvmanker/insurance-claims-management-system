@@ -163,12 +163,7 @@ public class ClaimService {
                     .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
             case OWNED_CLAIMS -> claimRepository.findByIdAndOwnerId(claimId, user.getId())
                     .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
-            case NONE -> {
-                if (claimRepository.existsById(claimId)) {
-                    throw new ResponseStatusException(FORBIDDEN, "You do not have access to this claim");
-                }
-                throw new ResponseStatusException(NOT_FOUND, "Claim not found");
-            }
+            case NONE -> throw new ResponseStatusException(NOT_FOUND, "Claim not found");
         };
     }
 
