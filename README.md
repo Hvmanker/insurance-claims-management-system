@@ -41,10 +41,12 @@ flowchart LR
 
 ## Run Locally
 
-Install Java 21, Maven, and Docker, then build the service jars:
+You need Docker (and Docker Compose). `docker compose up --build` compiles every service inside the multi-stage image build, so a host JDK or Maven install is not required for the container stack.
+
+For IDE work or running tests on the host, install Java 21 and Maven:
 
 ```bash
-mvn clean package
+mvn clean verify
 ```
 
 After the package/groupId rename to `com.hvmanker.insurance`, run `mvn -U clean install` once so your local `~/.m2` does not resolve outdated cached modules.
