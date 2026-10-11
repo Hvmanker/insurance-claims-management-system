@@ -1,0 +1,7 @@
+{
+  "id": "99999999-9999-9999-9999-999999999999",
+  "email": "admin@insureflow.local",
+  "fullName": "Noah Brooks",
+  "role": "ADMIN",
+  "passwordEnv": "DEMO_ADMIN_PASSWORD"
+}

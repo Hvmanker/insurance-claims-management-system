@@ -79,10 +79,7 @@ public class ClaimService {
 
     @Transactional(readOnly = true)
     public List<ClaimResponse> recentClaims(PortalUser user) {
-        List<Claim> claims = user.getRole() == UserRole.AGENT
-                ? claimRepository.findTop50ByOrderBySubmittedAtDesc()
-                : claimRepository.findTop50ByOwnerIdOrderBySubmittedAtDesc(user.getId());
-        return claims.stream()
+        return claimsVisibleTo(user).stream()
                 .map(this::toResponse)
                 .toList();
     }
@@ -95,9 +92,7 @@ public class ClaimService {
         }
 
         BigDecimal totalEstimatedAmount = BigDecimal.ZERO;
-        List<Claim> visibleClaims = user.getRole() == UserRole.AGENT
-                ? claimRepository.findAll()
-                : claimRepository.findTop50ByOwnerIdOrderBySubmittedAtDesc(user.getId());
+        List<Claim> visibleClaims = claimsForSummary(user);
         for (Claim claim : visibleClaims) {
             counts.compute(claim.getStatus(), (status, count) -> count + 1);
             totalEstimatedAmount = totalEstimatedAmount.add(claim.getEstimatedAmount());
@@ -163,12 +158,45 @@ public class ClaimService {
     }
 
     private Claim findVisibleClaim(UUID claimId, PortalUser user) {
-        if (user.getRole() == UserRole.AGENT) {
-            return claimRepository.findById(claimId)
+        return switch (claimAccessFor(user.getRole())) {
+            case ALL_CLAIMS -> claimRepository.findById(claimId)
                     .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
+            case OWNED_CLAIMS -> claimRepository.findByIdAndOwnerId(claimId, user.getId())
+                    .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
+            case NONE -> throw new ResponseStatusException(NOT_FOUND, "Claim not found");
+        };
+    }
+
+    private List<Claim> claimsVisibleTo(PortalUser user) {
+        return switch (claimAccessFor(user.getRole())) {
+            case ALL_CLAIMS -> claimRepository.findTop50ByOrderBySubmittedAtDesc();
+            case OWNED_CLAIMS -> claimRepository.findTop50ByOwnerIdOrderBySubmittedAtDesc(user.getId());
+            case NONE -> List.of();
+        };
+    }
+
+    private List<Claim> claimsForSummary(PortalUser user) {
+        return switch (claimAccessFor(user.getRole())) {
+            case ALL_CLAIMS -> claimRepository.findAll();
+            case OWNED_CLAIMS -> claimRepository.findTop50ByOwnerIdOrderBySubmittedAtDesc(user.getId());
+            case NONE -> List.of();
+        };
+    }
+
+    private ClaimAccess claimAccessFor(UserRole role) {
+        if (role == UserRole.AGENT) {
+            return ClaimAccess.ALL_CLAIMS;
         }
-        return claimRepository.findByIdAndOwnerId(claimId, user.getId())
-                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Claim not found"));
+        if (role == UserRole.INSURED) {
+            return ClaimAccess.OWNED_CLAIMS;
+        }
+        return ClaimAccess.NONE;
+    }
+
+    private enum ClaimAccess {
+        ALL_CLAIMS,
+        OWNED_CLAIMS,
+        NONE
     }
 
     private void recordEvent(UUID claimId, String eventType, String title, String detail, String actor) {
