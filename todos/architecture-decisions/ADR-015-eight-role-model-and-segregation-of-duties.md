@@ -24,7 +24,15 @@ Cost: slice 6 and slice 7 are the largest slices. Finance and Agent screens are 
 
 ## Decision
 
-Adopt eight roles: Insured, Agent, Adjuster, Supervisor, SIU investigator, Finance officer, Auditor, and Admin. Enforce the permission matrix on the server. Slice 0 writes down how today's AGENT maps. Do not leave both meanings on one enum value.
+Adopt eight roles: Insured, Agent (broker book), Adjuster, Supervisor, SIU investigator, Finance officer, Auditor, and Admin. Enforce the permission matrix on the server. **BROKER is not a rename of legacy `AGENT`.** The UI label "Agent" refers to the **BROKER** role in the eight-role model.
+
+### Two-step migration from today's `AGENT`
+
+**Step 1 — Phase 0 (slice 0):** Add **`BROKER`** as a **new** `UserRole` value. The dashboard labels it **"Agent"**. Legacy **`AGENT` stays unchanged** so the existing decide flow and demo seed keep working until slice 1B. New roles introduced in Phase 0 are inert for claims access until their slices ship.
+
+**Step 2 — Slice 1B:** Run an **additive Flyway migration** that maps existing **`AGENT` users to `ADJUSTER`**, retires **`AGENT`** as a decision role, and updates seeds. After 1B, adjusters decide within authority limits (enforced in 6A per ADR-018); brokers (`BROKER`) never decide claims.
+
+Do not leave both "agent as approver" and "agent as broker" on one enum value.
 
 ## Alternatives Considered
 

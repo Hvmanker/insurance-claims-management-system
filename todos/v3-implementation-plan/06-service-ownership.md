@@ -9,8 +9,8 @@ No service writes another service's tables. Each service owns a schema in one Po
 
 | Service | Owns |
 | --- | --- |
-| claim-service | DRAFT to SUBMITTED, MORE_INFO_REQUESTED back to ANALYSIS_PENDING, WITHDRAWN, EXPIRED, and the public read model. |
-| approval-service | Every decision from ANALYSIS_PENDING through APPROVED, REJECTED, and MORE_INFO_REQUESTED. From slice 6, also ESCALATED, UNDER_INVESTIGATION, assignment, and SLA. |
+| claim-service | DRAFT to SUBMITTED, MORE_INFO_REQUESTED back to ANALYSIS_PENDING, EXPIRED, and the public read model. |
+| approval-service | Every decision from ANALYSIS_PENDING through APPROVED, REJECTED, and MORE_INFO_REQUESTED. **Authority limit enforcement** (ADR-018) lives here from slice 6A. From slice 6, also **ESCALATED**, **UNDER_INVESTIGATION**, assignment, and SLA. |
 | settlement-service | APPROVED to SIMULATED_SETTLED. A record only. From slice 6, settlement holds block that transition until release. |
 | notification-service | Delivery. It publishes to SNS. An SQS queue with its own DLQ performs outbound retries. It does not change claim state. |
 | analysis worker | Reads READY documents and publishes facts. It does not write claim, approval, or settlement tables. |
