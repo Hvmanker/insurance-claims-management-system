@@ -13,7 +13,7 @@ This is when hosting decisions are made. Until this slice, local Compose is the 
 - Seeded demo accounts, upload quotas, nightly reset.
 - Backup and one restore rehearsal.
 - Measure RSS, startup, disk growth, and event lag. Publish the numbers.
-- README: architecture, alignment matrix, known limits, credit to the original author, and a one-step local run.
+- README: architecture, alignment matrix, known limits, ownership and permission notes (ADR-001), and a one-step local run.
 - Two-minute demo video.
 
 ## Gate
