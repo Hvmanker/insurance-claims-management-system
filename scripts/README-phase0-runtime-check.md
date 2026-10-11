@@ -64,7 +64,7 @@ The authoritative names and order live in the `CHECKS` array inside `phase0-runt
 8. Late `claim.decided` e2e (SKIPPED: `consumers not yet on the contract envelope (1A)`)
 9. Duplicate `eventId` e2e (SKIPPED: `consumers not yet on the contract envelope (1A)`)
 10. 5200.00 vs 5180.00 reconciliation (SKIPPED: `consumers not yet on the contract envelope (1A)`)
-11. Decide/commit cache race (SKIPPED without a pause test hook)
+11. Decide/commit cache race (SKIPPED: `no hook to pause between decide and its commit`)
 12. README dashboard URL returns HTTP 200
 13. TM-D high-value claim stays `SUBMITTED` until legacy AGENT decides
 14. No stale `com.sunil`-typed Kafka messages after rename (always **SKIPPED** here: `upgrade path not exercised`)
