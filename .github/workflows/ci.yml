@@ -31,14 +31,27 @@ jobs:
       - name: Verify persona fixtures packaged in claim-service image
         run: |
           set -euo pipefail
-          image_id="$(docker compose --env-file .env.example images -q claim-service)"
-          if [ -z "$image_id" ]; then
-            echo "claim-service image not found after compose build"
+          img="$(docker compose --env-file .env.example config --format json | jq -r '.services["claim-service"].image // (.name + "-claim-service")')"
+          if [ -z "$img" ] || [ "$img" = "null" ]; then
+            img="$(docker compose --env-file .env.example config --images claim-service | head -n1)"
+          fi
+          if [ -z "$img" ] || [ "$img" = "null" ]; then
+            echo "Could not resolve claim-service image name from compose config"
             exit 1
           fi
-          cid="$(docker create "$image_id")"
-          docker cp "$cid:/app/app.jar" /tmp/cs.jar
-          docker rm "$cid"
+          if ! docker image inspect "$img" >/dev/null 2>&1; then
+            echo "claim-service image not found after compose build: ${img}"
+            exit 1
+          fi
+          cid=""
+          cleanup() {
+            if [ -n "${cid}" ]; then
+              docker rm -f "${cid}" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+          cid="$(docker create "$img")"
+          docker cp "${cid}:/app/app.jar" /tmp/cs.jar
           mapfile -t persona_json < <(unzip -Z1 /tmp/cs.jar | grep -E '^BOOT-INF/classes/fixtures/personas/.*\.json$')
           count="${#persona_json[@]}"
           echo "Persona fixture JSON entries (${count}):"
