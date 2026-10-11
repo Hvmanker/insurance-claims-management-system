@@ -12,6 +12,8 @@
 
 Under the product owner’s rule, **today’s `UserRole.AGENT` corresponds to ADJUSTER** (not broker). Renaming/migrating that meaning is **deferred to Phase 1B** via an **additive** Flyway migration; Phase 0 does not change role enums or permission checks.
 
+**Authority limits:** The legacy `AGENT` role can currently **decide any claim in `SUBMITTED` status with no amount limit** — `decide` only checks `UserRole.AGENT`, loads the claim by id, and requires `ClaimStatus.SUBMITTED`; it does not compare `estimatedAmount` to any threshold or cap the decision amount (`ClaimService.java:126-134`, `ClaimService.java:135-140`). `ManualDecisionRequest` carries only `approved` and `reason`, not an amount (`claim-service/src/main/java/com/sunil/insurance/claims/web/ManualDecisionRequest.java:7-10`). **This remains true until authority limits are enforced in Phase 6A** (planned **ADR-018**).
+
 ---
 
 ## Role mapping decision (approved for Phase 0)
