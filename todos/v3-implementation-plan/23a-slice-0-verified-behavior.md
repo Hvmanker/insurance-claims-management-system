@@ -12,7 +12,7 @@
 
 Under the product owner’s rule, **today’s `UserRole.AGENT` corresponds to ADJUSTER** (not broker). Renaming/migrating that meaning is **deferred to Phase 1B** via an **additive** Flyway migration; Phase 0 does not change role enums or permission checks.
 
-**Authority limits:** The legacy `AGENT` role can currently **decide any claim in `SUBMITTED` status with no amount limit** — `decide` only checks `UserRole.AGENT`, loads the claim by id, and requires `ClaimStatus.SUBMITTED`; it does not compare `estimatedAmount` to any threshold or cap the decision amount (`ClaimService.java:126-134`, `ClaimService.java:135-140`). `ManualDecisionRequest` carries only `approved` and `reason`, not an amount (`claim-service/src/main/java/com/sunil/insurance/claims/web/ManualDecisionRequest.java:7-10`). **This remains true until authority limits are enforced in Phase 6A** (planned **ADR-018**).
+**Authority limits:** The legacy `AGENT` role can currently **decide any claim in `SUBMITTED` status with no amount limit** — `decide` only checks `UserRole.AGENT`, loads the claim by id, and requires `ClaimStatus.SUBMITTED`; it does not compare `estimatedAmount` to any threshold or cap the decision amount (`ClaimService.java:126-134`, `ClaimService.java:135-140`). `ManualDecisionRequest` carries only `approved` and `reason`, not an amount (`claim-service/src/main/java/com/sunil/insurance/claims/web/ManualDecisionRequest.java:7-10`). **This remains true until authority limits are enforced in Phase 6A** (planned **ADR-018**), including ADR-018 rules that **only `SUPERVISOR` may decide `ESCALATED` claims** and **gated reject-over-limit** behavior — none of that applies in the baseline code.
 
 ---
 
@@ -30,7 +30,9 @@ Under the product owner’s rule, **today’s `UserRole.AGENT` corresponds to AD
 
 `ClaimService.get` is `@Cacheable` with key `#p0` (claim id only), so the cache entry is shared across users (`ClaimService.java:75-77`). After any user successfully loads a claim, a subsequent caller with the same id can receive the cached `ClaimResponse` **without re-running** `findVisibleClaim` (which enforces owner scope for non-AGENT users at `ClaimService.java:170-171`). Example: AGENT warms the cache; another INSURED who does not own the claim may then read it.
 
-**Remediation:** Phase 0 subtask **0.7** (test **TM-A** — “Another user’s claim or document”, read half).
+`decide()` (`ClaimService.java:126-140`) updates claim status in the database but has **no** `@CacheEvict`. Only `updateStatus` evicts the `claims` cache entry (`ClaimService.java:117-118`). So a claim read from cache before a manual decision can still appear **`SUBMITTED`** via `get` after `decide` until something calls `updateStatus` or the entry expires. Phase **0.7** fixes this; **TM-A** also covers get-after-decide.
+
+**Remediation:** Phase 0 subtask **0.7** (test **TM-A** — “Another user’s claim or document”, read half, plus stale status after decide).
 
 ---
 
@@ -85,7 +87,7 @@ Producers use `KafkaTemplate` directly; there is **no** outbox table or outbox p
 
 V2 inserts `agent@insureflow.local` with role `AGENT` and a BCrypt `password_hash` (`claim-service/src/main/resources/db/migration/V2__add_portal_accounts_and_claim_reason.sql:16-17`).
 
-`README.md` documents the plaintext demo password on **line 66** (not reproduced here). **Approved:** keep this seed until Phase 1B; removal from an already-applied V2 is a separate Flyway/checksum concern (Phase 0.4).
+`README.md` documents the plaintext demo password on **line 66** (not reproduced here). **Approved:** keep the legacy **`AGENT` portal user** (`agent@insureflow.local`) until Phase **1B** for demo decide flows. The **BCrypt hash is removed from V2 in subtask 0.4** (Flyway checksum / one-time `docker compose down -v` on existing volumes); the user is **re-seeded by the demo-profile seeder from env**, and the old README password is **burnt** (not documented after 0.9).
 
 ### High-value claims vs README
 
@@ -169,7 +171,7 @@ No other Java log calls at HEAD.
 | Legacy `AGENT` seed user | Keep until Phase **1B** |
 | Cache ownership leak | Fix in Phase **0.7**; gate test **TM-A** |
 | Topics `claim.info.provided`, `claim.analysis.requested` | **Table rows only** in Phase 0.8; **fixtures deferred to Phase 1A** |
-| Compose host ports | Remove 5432/6379/9092; remove **8082–8084**; **only 8081** (gateway/claim-service) on host |
+| Compose host ports | Remove 5432/6379/9092; remove **8082–8084**; **only 8081** (**claim-service** until slice **1D** gateway) on host |
 | Slice 0 tests | **TM-A** cache/ownership read, **TM-B** notification log PII, **TM-C** contract/schema fixtures, **TM-D** high-value stays non-rejected (`SUBMITTED`) |
 | Secrets in CI | **gitleaks** preferred; grep/`$2[aby]$` fallback |
 
