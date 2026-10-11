@@ -2,6 +2,5 @@
   "id": "11111111-1111-1111-1111-111111111111",
   "email": "agent@insureflow.local",
   "fullName": "Morgan Rivera",
-  "role": "AGENT",
-  "passwordEnv": "DEMO_AGENT_PASSWORD"
+  "role": "AGENT"
 }

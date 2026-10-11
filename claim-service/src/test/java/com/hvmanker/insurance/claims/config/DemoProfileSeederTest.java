@@ -15,6 +15,8 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.ResourcePatternResolver;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
@@ -150,6 +152,20 @@ class DemoProfileSeederTest {
         assertTrue(combined.contains("AGENT"));
         assertTrue(combined.contains("INSURED"));
         assertTrue(combined.contains("BROKER"));
+    }
+
+    @Test
+    void failsFastWhenNoPersonaFixturesOnClasspath() throws Exception {
+        ResourcePatternResolver resolver = mock(ResourcePatternResolver.class);
+        when(resolver.getResources(DemoProfileSeeder.PERSONA_FIXTURES_PATTERN)).thenReturn(new Resource[0]);
+        DemoProfileSeeder emptyFixturesSeeder = new DemoProfileSeeder(
+                mock(PortalUserRepository.class),
+                new BCryptPasswordEncoder(12),
+                mock(Environment.class),
+                new ObjectMapper());
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class, () -> emptyFixturesSeeder.loadPersonaFixtures(resolver));
+        assertEquals(DemoProfileSeeder.MISSING_PERSONA_FIXTURES_MESSAGE, error.getMessage());
     }
 
     @Test

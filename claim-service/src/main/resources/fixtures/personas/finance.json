@@ -2,6 +2,5 @@
   "id": "77777777-7777-7777-7777-777777777777",
   "email": "finance@insureflow.local",
   "fullName": "Chris Dalton",
-  "role": "FINANCE",
-  "passwordEnv": "DEMO_FINANCE_PASSWORD"
+  "role": "FINANCE"
 }

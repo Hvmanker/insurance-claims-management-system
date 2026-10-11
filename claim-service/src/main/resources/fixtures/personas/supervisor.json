@@ -2,6 +2,5 @@
   "id": "55555555-5555-5555-5555-555555555555",
   "email": "supervisor@insureflow.local",
   "fullName": "Sam Okonkwo",
-  "role": "SUPERVISOR",
-  "passwordEnv": "DEMO_SUPERVISOR_PASSWORD"
+  "role": "SUPERVISOR"
 }

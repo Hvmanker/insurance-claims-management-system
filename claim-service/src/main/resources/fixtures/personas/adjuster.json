@@ -2,6 +2,5 @@
   "id": "44444444-4444-4444-4444-444444444444",
   "email": "adjuster@insureflow.local",
   "fullName": "Elena Vasquez",
-  "role": "ADJUSTER",
-  "passwordEnv": "DEMO_ADJUSTER_PASSWORD"
+  "role": "ADJUSTER"
 }

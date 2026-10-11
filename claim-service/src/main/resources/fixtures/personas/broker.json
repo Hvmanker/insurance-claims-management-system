@@ -2,6 +2,5 @@
   "id": "33333333-3333-3333-3333-333333333333",
   "email": "broker@insureflow.local",
   "fullName": "Jordan Lee",
-  "role": "BROKER",
-  "passwordEnv": "DEMO_BROKER_PASSWORD"
+  "role": "BROKER"
 }

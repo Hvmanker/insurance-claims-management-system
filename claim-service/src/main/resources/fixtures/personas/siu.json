@@ -2,6 +2,5 @@
   "id": "66666666-6666-6666-6666-666666666666",
   "email": "siu@insureflow.local",
   "fullName": "Priya Nair",
-  "role": "SIU",
-  "passwordEnv": "DEMO_SIU_PASSWORD"
+  "role": "SIU"
 }
