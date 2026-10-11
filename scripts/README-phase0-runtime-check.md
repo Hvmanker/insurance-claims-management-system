@@ -18,6 +18,7 @@ If `COMPOSE_PROJECT` is unset or any other value, the script exits **2** before 
 - Bash, `curl`, and `python3` (JSON parsing)
 - Optional: `nc` (secondary host-port probe), `shellcheck` (lint), Maven (only if a Kafka integration TM-B test exists)
 - A **`.env`** file at the repo root (copy from `.env.example`). The script loads **only** `.env` for credentials and test configuration. It fails fast if `.env` is missing.
+- When `SPRING_PROFILES_ACTIVE` includes `demo`, the script exits before Docker if any of `DEMO_AGENT_PASSWORD`, `DEMO_INSURED_PASSWORD`, or `DEMO_BROKER_PASSWORD` is unset (all three are listed in `.env.example` with placeholders).
 - Built JARs are not required upfront; `compose up --build` builds images.
 
 ## Usage
