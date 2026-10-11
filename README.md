@@ -1,8 +1,12 @@
 # Insurance Claims Management System
 
-[![CI](https://github.com/sunilguntupalli/insurance-claims-management-system/actions/workflows/ci.yml/badge.svg)](https://github.com/sunilguntupalli/insurance-claims-management-system/actions/workflows/ci.yml)
+[![CI](https://github.com/Hvmanker/insurance-claims-management-system/actions/workflows/ci.yml/badge.svg)](https://github.com/Hvmanker/insurance-claims-management-system/actions/workflows/ci.yml)
 
 Spring Boot microservices implementation for claim submission, approval, settlement, and notification workflows.
+
+## Attribution
+
+This repository extends the original [insurance-claims-management-system](https://github.com/sunilguntupalli/insurance-claims-management-system) project by **sunilguntupalli** on GitHub. The current owner has permission to extend and evolve this codebase for the InsureFlow demo (see [ADR-001](todos/architecture-decisions/ADR-001-extend-existing-repo.md)).
 
 ## Architecture
 
@@ -45,13 +49,24 @@ Install Java 21, Maven, and Docker, then build the service jars:
 mvn clean package
 ```
 
-Copy environment variables from the example file, then start the infrastructure and services:
+Copy environment variables from the example file, set strong passwords for the required variables, then start the infrastructure and services:
 
 ```bash
 cp .env.example .env
 # Edit `.env` and replace placeholder passwords before starting the stack.
 docker compose up --build
 ```
+
+**Optional demo users:** By default the `demo` Spring profile is off (`SPRING_PROFILES_ACTIVE` is empty in `.env.example`). To seed legacy portal accounts at startup, opt in explicitly in your `.env`:
+
+```bash
+SPRING_PROFILES_ACTIVE=demo
+DEMO_AGENT_PASSWORD=replace-with-strong-demo-agent-password
+DEMO_INSURED_PASSWORD=replace-with-strong-demo-insured-password
+# Set the other DEMO_* passwords listed in `.env.example` if you use those personas.
+```
+
+Demo portal users (when the profile is active) include legacy agent `agent@insureflow.local` and insured `insured@insureflow.local`. Use only the `DEMO_*` values from your `.env` file—never commit real passwords. Without the `demo` profile, `portal_users` stays empty until someone registers through the portal.
 
 **One-time database reset:** migration `V2__add_portal_accounts_and_claim_reason.sql` no longer inserts demo users (they are seeded by the `demo` Spring profile from environment passwords). If you previously ran this project against an existing Postgres volume, reset once so Flyway can re-apply the changed migration:
 
@@ -60,15 +75,13 @@ docker compose down -v
 docker compose up --build
 ```
 
-Open the secure insurance portal:
+Open the secure insurance portal (host port **8081** is `claim-service` until the Phase 1D API gateway):
 
 ```text
-http://localhost:8085/dashboard
+http://localhost:8081/dashboard
 ```
 
 Create an insured member account, sign in, and submit a claim from the portal. The form requires a claim reason and the claim is visible only to its owner.
-
-With `SPRING_PROFILES_ACTIVE=demo` (see `.env.example`), demo portal users are seeded at startup: legacy agent `agent@insureflow.local` and insured `insured@insureflow.local`. Use the `DEMO_AGENT_PASSWORD` and `DEMO_INSURED_PASSWORD` values from your `.env` file. Without the `demo` profile, `portal_users` stays empty until someone registers through the portal.
 
 Passwords created through the portal are stored as BCrypt hashes; use a secret manager and SSO/MFA in a production deployment.
 
@@ -91,36 +104,27 @@ Look up a claim by the returned `id`:
 curl http://localhost:8081/claims/{claimId}
 ```
 
-Claims at or below `AUTO_APPROVAL_LIMIT` are approved automatically and flow to settlement. Higher-value claims are rejected with a manual-review reason.
+Claims at or below `AUTO_APPROVAL_LIMIT` are approved automatically and flow to settlement. Higher-value claims stay in `SUBMITTED` until a legacy `AGENT` user records a manual decision in the portal.
 
 ## Test the Workflow
 
 1. Start the stack with `docker compose up --build`.
-2. Open `http://localhost:8081/dashboard`, create an insured member account, and submit an Auto or Home claim below `$10,000` with a reason.
+2. Create an insured member account and submit an Auto or Home claim below `$10,000` with a reason.
 3. Wait a few seconds for Kafka processing. The claim's status should change from `SUBMITTED` to `SETTLED`.
-4. Submit a claim above `$10,000` to verify the rejection path.
-5. Check the health endpoints:
+4. Submit a claim above `$10,000` and sign in as the legacy `AGENT` demo user (with `SPRING_PROFILES_ACTIVE=demo`) to approve or reject the manual-review queue item.
+5. Check the claim-service health endpoint:
 
 ```bash
 curl http://localhost:8081/actuator/health
-curl http://localhost:8082/actuator/health
-curl http://localhost:8083/actuator/health
-curl http://localhost:8084/actuator/health
 ```
 
 ## Continuous Integration
 
 GitHub Actions runs the approval-policy unit tests, compiles every Maven module on Java 21, and validates the complete Docker Compose build for each push and pull request.
 
-## Service Ports
+## Local access
 
-- Claim Service: `8085` on the host (`8081` inside Docker)
-- Approval Service: `8082`
-- Settlement Service: `8083`
-- Notification Service: `8084`
-- PostgreSQL: `5432`
-- Redis: `6379`
-- Kafka: `9092`
+Docker Compose publishes only **claim-service** on host port **8081** (approval, settlement, notification, and data stores are reachable on the internal Compose network). A single public entry point via Spring Cloud Gateway is planned in Phase 1D.
 
 ## Notes
 
