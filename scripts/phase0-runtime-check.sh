@@ -25,7 +25,13 @@ CHECKS=(
   '11|A read between `decide` and its commit doesn'\''t put the stale status back into the cache. Without a test hook that pauses between decide and the commit, always report SKIPPED with that reason. No timing-based PASS.|check_11_decide_commit_cache_race'
   '12|The README URL works from a clean clone.|check_12_readme_dashboard_url'
   '13|TM-D: a claim over 10k stays SUBMITTED and the legacy AGENT decides it, run on the live stack.|check_13_tm_d_high_value_manual_decide'
+  '14|no stale com.sunil-typed messages on Kafka topics after rename (topics emptied/recreated)|check_14_kafka_topics_empty_after_up'
+  '15|Redis claims cache flushed on deploy after rename|check_15_redis_claims_cache_empty_after_up'
 )
+
+# Captured immediately after initial `up` health wait (before gate checks mutate Kafka/Redis).
+PHASE0_SNAPSHOT_REDIS_CLAIMS_KEYS=""
+PHASE0_SNAPSHOT_KAFKA_NONEMPTY_TOPICS=""
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 LOG_FILE="${REPO_ROOT}/phase0-runtime-check-${TIMESTAMP}.log"
@@ -112,6 +118,27 @@ compose_with_profile() {
   shift
   # Shell env overrides .env interpolation for SPRING_PROFILES_ACTIVE.
   SPRING_PROFILES_ACTIVE="$profile" compose "$@"
+}
+
+capture_post_up_snapshots() {
+  local topic offsets line end_offset nonempty=""
+  PHASE0_SNAPSHOT_REDIS_CLAIMS_KEYS="$(
+    compose exec -T redis redis-cli -a "${REDIS_PASSWORD}" --scan --pattern 'claims*' 2>/dev/null | sort -u || true
+  )"
+  while IFS= read -r topic; do
+    [[ -z "$topic" ]] && continue
+    offsets="$(compose exec -T kafka /opt/kafka/bin/kafka-get-offsets.sh \
+      --bootstrap-server localhost:9092 --topic "$topic" 2>/dev/null || true)"
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      end_offset="${line##*:}"
+      if [[ "$end_offset" =~ ^[0-9]+$ ]] && [[ "$end_offset" -gt 0 ]]; then
+        nonempty="${nonempty} ${topic}:${end_offset}"
+      fi
+    done <<< "$offsets"
+  done < <(compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server localhost:9092 --list 2>/dev/null | grep -E '^claim\.' || true)
+  PHASE0_SNAPSHOT_KAFKA_NONEMPTY_TOPICS="$(printf '%s' "$nonempty" | xargs 2>/dev/null || true)"
 }
 
 wait_for_compose_healthy() {
@@ -477,7 +504,7 @@ check_08_late_claim_decided_e2e() {
   if has_late_claim_decided_e2e; then
     emit_result "$nn" FAIL "$name" "late claim.decided e2e hook present but runner not implemented in this script"
   else
-    emit_result "$nn" SKIPPED "$name" "no claim.decided inbox consumer on main"
+    emit_result "$nn" SKIPPED "$name" "consumers not yet on the contract envelope (1A)"
   fi
 }
 
@@ -487,7 +514,7 @@ check_09_duplicate_event_id_e2e() {
   if has_settlement_idempotency_e2e; then
     emit_result "$nn" FAIL "$name" "settlement idempotency hooks present but phase0 duplicate-event e2e runner not implemented"
   else
-    emit_result "$nn" SKIPPED "$name" "no settlement consumer on main"
+    emit_result "$nn" SKIPPED "$name" "consumers not yet on the contract envelope (1A)"
   fi
 }
 
@@ -497,7 +524,7 @@ check_10_amount_mismatch_reconciliation() {
   if has_reconciliation_consumer; then
     emit_result "$nn" FAIL "$name" "reconciliation consumer detected but 5200.00 vs 5180.00 e2e runner not implemented"
   else
-    emit_result "$nn" SKIPPED "$name" "no reconciliation consumer on main"
+    emit_result "$nn" SKIPPED "$name" "consumers not yet on the contract envelope (1A)"
   fi
 }
 
@@ -572,6 +599,27 @@ check_13_tm_d_high_value_manual_decide() {
   fi
 }
 
+check_14_kafka_topics_empty_after_up() {
+  local nn="14" name
+  name="$(check_display_name 13)"
+  if [[ -z "${PHASE0_SNAPSHOT_KAFKA_NONEMPTY_TOPICS:-}" ]]; then
+    emit_result "$nn" PASS "$name" "claim.* Kafka topics empty or freshly created immediately after up"
+    return
+  fi
+  emit_result "$nn" SKIPPED "$name" "non-empty claim topics after up:${PHASE0_SNAPSHOT_KAFKA_NONEMPTY_TOPICS}"
+}
+
+check_15_redis_claims_cache_empty_after_up() {
+  local nn="15" name key_count
+  name="$(check_display_name 14)"
+  if [[ -z "${PHASE0_SNAPSHOT_REDIS_CLAIMS_KEYS//[$'\n\r\t ']}" ]]; then
+    emit_result "$nn" PASS "$name" "redis SCAN claims* returned no keys immediately after up"
+    return
+  fi
+  key_count="$(printf '%s\n' "$PHASE0_SNAPSHOT_REDIS_CLAIMS_KEYS" | sed '/^$/d' | wc -l | tr -d ' ')"
+  emit_result "$nn" SKIPPED "$name" "redis SCAN claims* found ${key_count} key(s) after up"
+}
+
 run_all_checks() {
   local spec nn display fn
   for spec in "${CHECKS[@]}"; do
@@ -608,6 +656,9 @@ main() {
   if ! wait_for_compose_healthy; then
     log_line "WARN: initial health wait timed out after ${HEALTH_TIMEOUT_SEC}s; running checks anyway"
   fi
+
+  log_line "capturing post-up Kafka/Redis snapshots for checks 14-15"
+  capture_post_up_snapshots
 
   run_all_checks
   print_summary

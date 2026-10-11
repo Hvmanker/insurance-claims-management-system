@@ -41,8 +41,8 @@ Output is teed to `phase0-runtime-check-<UTC-timestamp>.log` in the repo root. V
 3. `docker compose -p phase0check up -d --build`
 4. Waits for Compose health (timeout `PHASE0_HEALTH_TIMEOUT_SEC`, default 900s).
 5. Runs checks **01–13** in the order of the `CHECKS` array at the top of the script (reorder there to match the Verifier).
-6. Prints `SUMMARY pass=… fail=… skipped=… total=13`
-7. Exits **0** only if all 13 checks **PASS**; any **FAIL** or **SKIPPED** yields a non-zero exit.
+6. Prints `SUMMARY pass=… fail=… skipped=… total=15`
+7. Exits **0** only if all 15 checks **PASS**; any **FAIL** or **SKIPPED** yields a non-zero exit.
 
 Override the claim-service base URL with `PHASE0_BASE_URL` (default `http://localhost:8081`).
 
@@ -57,12 +57,14 @@ The authoritative names and order live in the `CHECKS` array inside `phase0-runt
 5. Demo sign-in after `down -v` and `up` with `demo` profile
 6. Live TM-A cache authorization (curl + real Redis)
 7. TM-B Kafka integration (SKIPPED if only unit tests exist)
-8. Late `claim.decided` e2e (SKIPPED until consumer exists)
-9. Duplicate `eventId` e2e (SKIPPED until settlement consumer exists)
-10. 5200.00 vs 5180.00 reconciliation (SKIPPED until consumer exists)
+8. Late `claim.decided` e2e (SKIPPED: `consumers not yet on the contract envelope (1A)`)
+9. Duplicate `eventId` e2e (SKIPPED: `consumers not yet on the contract envelope (1A)`)
+10. 5200.00 vs 5180.00 reconciliation (SKIPPED: `consumers not yet on the contract envelope (1A)`)
 11. Decide/commit cache race (SKIPPED without a pause test hook)
 12. README dashboard URL returns HTTP 200
 13. TM-D high-value claim stays `SUBMITTED` until legacy AGENT decides
+14. No stale Kafka messages after topic rename (PASS when `claim.*` topics are empty right after `up`)
+15. Redis `claims*` cache flushed on deploy (PASS when `redis-cli --scan --pattern 'claims*'` is empty right after `up`)
 
 ## Lint
 
