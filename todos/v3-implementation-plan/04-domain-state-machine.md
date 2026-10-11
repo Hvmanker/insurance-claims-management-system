@@ -8,28 +8,27 @@ Every claim follows one state machine. The service that owns a transition is the
 
 The source plan's diagram is embedded and was not transcribed into the Markdown. The states below are the ones the prose names. Slice 0 should confirm this list before the Flyway migration. Do not add states the plan does not name.
 
-## Core states
+## Core states (nine)
 
-The plan describes nine states and one human gate. The names used by the ownership section and the decision table are:
+Slice 0 locks the **nine** core states below. **`SIMULATED_SETTLED` is the ninth** (settlement terminal in the read model). Claimant withdrawal is not a named state in v3. `REVIEW_READY` is the human gate.
 
 | State | Meaning |
 | --- | --- |
 | DRAFT | Claim started, not yet submitted. |
-| SUBMITTED | Insured or agent submitted. Idempotency applies here. |
+| SUBMITTED | Insured or broker submitted. Idempotency applies here. |
 | ANALYSIS_PENDING | Waiting for the analysis worker. |
 | REVIEW_READY | Human gate. Every path except all five rules passing ends here. |
 | APPROVED | Rules passed, or a human approved inside their authority. |
 | REJECTED | A human rejected with a coded reason. |
 | MORE_INFO_REQUESTED | A human asked for more documents. |
-| WITHDRAWN | Claimant withdrew. Owned by claim-service. |
 | EXPIRED | Batch job expired a stale MORE_INFO_REQUESTED claim. |
+| SIMULATED_SETTLED | Settlement terminal. Settlement-service owns the move from `APPROVED`. The UI labels it simulated. No money moves. |
 
-`SIMULATED_SETTLED` is the settlement terminal. Settlement-service owns the move from `APPROVED` to `SIMULATED_SETTLED`. The UI labels it simulated. No money moves. Treat it as part of the claim lifecycle the read model must show. If the embedded diagram counts it inside the nine, slice 0 records that and does not invent an extra name.
+### Slice 6 extensions (not counted in the nine)
 
-Slice 6 adds two branches from `REVIEW_READY`. They extend the machine:
+Slice **6A** adds **`ESCALATED`** when a decision exceeds authority (ADR-018). Only a supervisor decides escalated claims.
 
-- `ESCALATED` when an adjuster's decision exceeds their authority limit. A supervisor approves or rejects.
-- `UNDER_INVESTIGATION` when a fraud flag crosses a threshold or an adjuster refers the claim. An SIU investigator records findings. The claim returns to `REVIEW_READY` with a recommendation. Investigation never auto-rejects.
+Slice **6B** adds **`UNDER_INVESTIGATION`** when a fraud flag crosses a threshold or an adjuster refers the claim. An SIU investigator records findings. The claim returns to `REVIEW_READY` with a recommendation. Investigation never auto-rejects.
 
 ## Transitions the plan specifies
 
