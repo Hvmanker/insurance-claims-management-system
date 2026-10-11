@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Phase 0 runtime gate — throwaway Compose project "phase0check" only.
+# shellcheck disable=SC2317,SC2016 # CHECKS entries are literal names; check_* functions run via CHECKS dispatch
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -71,7 +72,8 @@ emit_result() {
 }
 
 check_display_name() {
-  local index="$1" spec="${CHECKS[$index]}"
+  local index="$1"
+  local spec="${CHECKS[$index]}"
   local name="${spec#*|}"
   name="${name%%|check_*}"
   printf '%s' "$name"
@@ -324,7 +326,7 @@ check_02_host_port_exposure() {
     'settlement-service:8083'
     'notification-service:8084'
   )
-  local entry svc port mapping host_port nc_ok skip_ports=() fail_reasons=()
+  local entry svc port mapping host_port skip_ports=() fail_reasons=()
   for entry in "${services_ports[@]}"; do
     svc="${entry%%:*}"
     port="${entry##*:}"
@@ -676,6 +678,14 @@ print_summary() {
   log_line "SUMMARY pass=${PASS_COUNT} fail=${FAIL_COUNT} skipped=${SKIP_COUNT} total=${#CHECKS[@]}"
 }
 
+list_checks() {
+  local spec nn display _fn
+  for spec in "${CHECKS[@]}"; do
+    IFS='|' read -r nn display _fn <<< "$spec"
+    printf '%s\t%s\n' "$nn" "$display"
+  done
+}
+
 main() {
   require_compose_project_guard
   require_env_file
@@ -705,5 +715,10 @@ main() {
   fi
   exit 1
 }
+
+if [[ "${1:-}" == "--list" ]]; then
+  list_checks
+  exit 0
+fi
 
 main "$@"

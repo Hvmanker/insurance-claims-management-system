@@ -32,6 +32,9 @@ cp .env.example .env
 mvn -DskipTests package   # required until multi-stage Dockerfile.service merges
 export COMPOSE_PROJECT=phase0check
 ./scripts/phase0-runtime-check.sh
+
+# Self-test: list check numbers and names (no Docker)
+./scripts/phase0-runtime-check.sh --list
 ```
 
 Output is teed to `phase0-runtime-check-<UTC-timestamp>.log` in the repo root. Values that look like passwords or secrets from `.env` are masked in the log (`***REDACTED***`).
