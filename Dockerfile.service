@@ -1,6 +1,43 @@
-FROM eclipse-temurin:21-jre
+# syntax=docker/dockerfile:1
+
+FROM maven:3.9-eclipse-temurin-21 AS build
+
+WORKDIR /build
+
+COPY pom.xml .
+COPY common/pom.xml common/pom.xml
+COPY claim-service/pom.xml claim-service/pom.xml
+COPY approval-service/pom.xml approval-service/pom.xml
+COPY settlement-service/pom.xml settlement-service/pom.xml
+COPY notification-service/pom.xml notification-service/pom.xml
+
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -B -ntp dependency:go-offline
+
+COPY common/src common/src
+COPY claim-service/src claim-service/src
+COPY approval-service/src approval-service/src
+COPY settlement-service/src settlement-service/src
+COPY notification-service/src notification-service/src
+
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -B -ntp -DskipTests package
+
+FROM eclipse-temurin:21-jre AS run
+
 ARG JAR_FILE
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /app app \
+    && install -d -o app -g app -m 0750 /app
+
 WORKDIR /app
-COPY ${JAR_FILE} app.jar
+COPY --from=build --chown=app:app /build/${JAR_FILE} app.jar
+
+USER app
+
 EXPOSE 8081 8082 8083 8084
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
