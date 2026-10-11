@@ -29,10 +29,6 @@ CHECKS=(
   '15|Redis claims cache flushed on deploy after rename|check_15_redis_claims_cache_empty_after_up'
 )
 
-# Captured immediately after initial `up` health wait (before gate checks mutate Kafka/Redis).
-PHASE0_SNAPSHOT_REDIS_CLAIMS_KEYS=""
-PHASE0_SNAPSHOT_KAFKA_NONEMPTY_TOPICS=""
-
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 LOG_FILE="${REPO_ROOT}/phase0-runtime-check-${TIMESTAMP}.log"
 
@@ -118,27 +114,6 @@ compose_with_profile() {
   shift
   # Shell env overrides .env interpolation for SPRING_PROFILES_ACTIVE.
   SPRING_PROFILES_ACTIVE="$profile" compose "$@"
-}
-
-capture_post_up_snapshots() {
-  local topic offsets line end_offset nonempty=""
-  PHASE0_SNAPSHOT_REDIS_CLAIMS_KEYS="$(
-    compose exec -T redis redis-cli -a "${REDIS_PASSWORD}" --scan --pattern 'claims*' 2>/dev/null | sort -u || true
-  )"
-  while IFS= read -r topic; do
-    [[ -z "$topic" ]] && continue
-    offsets="$(compose exec -T kafka /opt/kafka/bin/kafka-get-offsets.sh \
-      --bootstrap-server localhost:9092 --topic "$topic" 2>/dev/null || true)"
-    while IFS= read -r line; do
-      [[ -z "$line" ]] && continue
-      end_offset="${line##*:}"
-      if [[ "$end_offset" =~ ^[0-9]+$ ]] && [[ "$end_offset" -gt 0 ]]; then
-        nonempty="${nonempty} ${topic}:${end_offset}"
-      fi
-    done <<< "$offsets"
-  done < <(compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
-    --bootstrap-server localhost:9092 --list 2>/dev/null | grep -E '^claim\.' || true)
-  PHASE0_SNAPSHOT_KAFKA_NONEMPTY_TOPICS="$(printf '%s' "$nonempty" | xargs 2>/dev/null || true)"
 }
 
 wait_for_compose_healthy() {
@@ -599,25 +574,22 @@ check_13_tm_d_high_value_manual_decide() {
   fi
 }
 
+# Checks 14–15: never PASS on the default `down -v` then `up` path — empty Kafka/Redis is
+# guaranteed and would be a false green. A real upgrade test must: (1) start a pre-rename
+# image stack, warm Redis with a cached claim entry, and publish at least one legacy
+# com.sunil-typed Kafka event; (2) run the documented topic reset / Redis claims flush;
+# (3) deploy new images and verify they start, serve a claim read, and consume new events
+# without deserialization errors.
 check_14_kafka_topics_empty_after_up() {
   local nn="14" name
   name="$(check_display_name 13)"
-  if [[ -z "${PHASE0_SNAPSHOT_KAFKA_NONEMPTY_TOPICS:-}" ]]; then
-    emit_result "$nn" PASS "$name" "claim.* Kafka topics empty or freshly created immediately after up"
-    return
-  fi
-  emit_result "$nn" SKIPPED "$name" "non-empty claim topics after up:${PHASE0_SNAPSHOT_KAFKA_NONEMPTY_TOPICS}"
+  emit_result "$nn" SKIPPED "$name" "upgrade path not exercised"
 }
 
 check_15_redis_claims_cache_empty_after_up() {
-  local nn="15" name key_count
+  local nn="15" name
   name="$(check_display_name 14)"
-  if [[ -z "${PHASE0_SNAPSHOT_REDIS_CLAIMS_KEYS//[$'\n\r\t ']}" ]]; then
-    emit_result "$nn" PASS "$name" "redis SCAN claims* returned no keys immediately after up"
-    return
-  fi
-  key_count="$(printf '%s\n' "$PHASE0_SNAPSHOT_REDIS_CLAIMS_KEYS" | sed '/^$/d' | wc -l | tr -d ' ')"
-  emit_result "$nn" SKIPPED "$name" "redis SCAN claims* found ${key_count} key(s) after up"
+  emit_result "$nn" SKIPPED "$name" "upgrade path not exercised"
 }
 
 run_all_checks() {
@@ -656,9 +628,6 @@ main() {
   if ! wait_for_compose_healthy; then
     log_line "WARN: initial health wait timed out after ${HEALTH_TIMEOUT_SEC}s; running checks anyway"
   fi
-
-  log_line "capturing post-up Kafka/Redis snapshots for checks 14-15"
-  capture_post_up_snapshots
 
   run_all_checks
   print_summary

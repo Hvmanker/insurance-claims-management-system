@@ -63,8 +63,10 @@ The authoritative names and order live in the `CHECKS` array inside `phase0-runt
 11. Decide/commit cache race (SKIPPED without a pause test hook)
 12. README dashboard URL returns HTTP 200
 13. TM-D high-value claim stays `SUBMITTED` until legacy AGENT decides
-14. No stale Kafka messages after topic rename (PASS when `claim.*` topics are empty right after `up`)
-15. Redis `claims*` cache flushed on deploy (PASS when `redis-cli --scan --pattern 'claims*'` is empty right after `up`)
+14. No stale `com.sunil`-typed Kafka messages after rename (always **SKIPPED** here: `upgrade path not exercised`)
+15. Redis `claims*` cache flushed on deploy after rename (always **SKIPPED** here: `upgrade path not exercised`)
+
+Checks **14** and **15** intentionally never **PASS** on the script’s default `down -v` then `up` flow, because empty topics and an empty Redis cache are guaranteed and would be a false green. A future upgrade gate must stand up a **pre-rename** image stack with a warmed `claims*` cache entry and a published legacy event, run the documented topic reset and Redis flush, deploy **new** images, then verify the new stack starts, serves claim reads, and consumes new events without deserialization errors.
 
 ## Lint
 
