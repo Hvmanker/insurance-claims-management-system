@@ -16,6 +16,7 @@ import org.springframework.core.io.support.ResourcePatternResolver;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.UUID;
@@ -29,9 +30,9 @@ import java.util.Locale;
 public class DemoProfileSeeder implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(DemoProfileSeeder.class);
     static final String PERSONA_FIXTURES_LOCATION = "classpath:fixtures/personas/";
-    static final String PERSONA_FIXTURES_PATTERN = "classpath*:/fixtures/personas/*.json";
+    static final String PERSONA_FIXTURES_PATTERN = PERSONA_FIXTURES_LOCATION + "*.json";
     static final String MISSING_PERSONA_FIXTURES_MESSAGE =
-            "demo profile active but no persona fixtures at classpath:fixtures/personas/";
+            "demo profile active but no persona fixtures at " + PERSONA_FIXTURES_LOCATION;
 
     static final UUID AGENT_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     static final UUID INSURED_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
@@ -57,8 +58,7 @@ public class DemoProfileSeeder implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) throws IOException {
         for (PersonaFixture persona : loadPersonaFixtures()) {
-            String passwordEnv = passwordEnvForRole(persona.role());
-            String rawPassword = requirePassword(passwordEnv, environment.getProperty(passwordEnv));
+            String rawPassword = requirePassword(persona.passwordEnv(), environment.getProperty(persona.passwordEnv()));
             seedUser(persona.id(), persona.email(), persona.fullName(), persona.role(), rawPassword);
         }
     }
@@ -68,23 +68,22 @@ public class DemoProfileSeeder implements ApplicationRunner {
     }
 
     List<PersonaFixture> loadPersonaFixtures(ResourcePatternResolver resolver) throws IOException {
-        Resource[] resources = resolver.getResources(PERSONA_FIXTURES_PATTERN);
+        Resource[] resources;
+        try {
+            resources = resolver.getResources(PERSONA_FIXTURES_PATTERN);
+        } catch (FileNotFoundException missingRoot) {
+            throw new IllegalStateException(MISSING_PERSONA_FIXTURES_MESSAGE, missingRoot);
+        }
         List<PersonaFixture> personas = new ArrayList<>();
         for (Resource resource : resources) {
             PersonaFixture persona = objectMapper.readValue(resource.getInputStream(), PersonaFixture.class);
-            if (persona.role() != null && persona.email() != null && persona.id() != null) {
-                personas.add(persona);
-            }
+            personas.add(persona);
         }
         if (personas.isEmpty()) {
             throw new IllegalStateException(MISSING_PERSONA_FIXTURES_MESSAGE);
         }
         personas.sort(Comparator.comparing(PersonaFixture::email));
         return personas;
-    }
-
-    static String passwordEnvForRole(UserRole role) {
-        return "DEMO_" + role.name() + "_PASSWORD";
     }
 
     void seedUser(UUID id, String email, String fullName, UserRole role, String rawPassword) {

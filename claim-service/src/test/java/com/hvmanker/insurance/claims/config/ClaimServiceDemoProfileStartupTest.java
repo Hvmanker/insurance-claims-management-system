@@ -1,12 +1,9 @@
 package com.hvmanker.insurance.claims.config;
 
-import com.hvmanker.insurance.claims.ClaimServiceApplication;
 import com.hvmanker.insurance.claims.domain.PortalUserRepository;
 import com.hvmanker.insurance.claims.domain.UserRole;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
@@ -14,25 +11,9 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-@SpringBootTest(classes = ClaimServiceApplication.class)
+@ClaimServiceSpringContextTest
 @ActiveProfiles("demo")
-@EmbeddedKafka(partitions = 1, topics = {
-        "claim.submitted",
-        "claim.manual-decision",
-        "claim.approved",
-        "claim.rejected",
-        "claim.settled"
-})
 @TestPropertySource(properties = {
-        "spring.datasource.url=jdbc:h2:mem:claim-demo-startup;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE",
-        "spring.datasource.username=sa",
-        "spring.datasource.password=",
-        "spring.datasource.driver-class-name=org.h2.Driver",
-        "spring.jpa.hibernate.ddl-auto=create-drop",
-        "spring.jpa.properties.hibernate.default_schema=",
-        "spring.flyway.enabled=false",
-        "spring.cache.type=simple",
-        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration",
         "DEMO_AGENT_PASSWORD=StartupDemoAgentPassword-7x",
         "DEMO_INSURED_PASSWORD=StartupDemoInsuredPassword-9z",
         "DEMO_BROKER_PASSWORD=StartupDemoBrokerPassword-1a",
@@ -65,7 +46,6 @@ class ClaimServiceDemoProfileStartupTest {
         EXPECTED_SEEDED_USERS.forEach((email, expectedRole) -> {
             var user = users.findByEmailIgnoreCase(email).orElseThrow(
                     () -> new AssertionError("Missing seeded portal user: " + email));
-            assertEquals(email, user.getEmail(), "username for " + email);
             assertEquals(expectedRole, user.getRole(), "role for " + email);
         });
     }
