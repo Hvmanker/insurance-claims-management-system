@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
@@ -28,6 +29,9 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 /**
@@ -37,6 +41,7 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 @EnableCaching
 @Import({
         ClaimService.class,
+        ClaimPayloadLoader.class,
         CachedClaimReader.class,
         ClaimServiceCacheAuthorizationTest.SupportConfig.class
 })
@@ -65,8 +70,12 @@ class ClaimServiceCacheAuthorizationTest {
     @Autowired
     private CacheManager cacheManager;
 
+    @SpyBean
+    private ClaimPayloadLoader claimPayloadLoader;
+
     @BeforeEach
     void seedClaim() {
+        reset(claimPayloadLoader);
         cacheManager.getCache("claims").clear();
         claimRepository.deleteAll();
         claimRepository.save(new Claim(
@@ -152,6 +161,21 @@ class ClaimServiceCacheAuthorizationTest {
 
         ClaimResponse warmReadC = claimService.get(CLAIM_ID_INSURED_C, agent);
         assertEquals(CLAIM_ID_INSURED_C, warmReadC.id());
+    }
+
+    @Test
+    void agentRepeatedReadsUseCachedPayloadLoaderOnceUntilDecideEvicts() {
+        PortalUser agent = user(AGENT_ID, UserRole.AGENT);
+
+        claimService.get(CLAIM_ID, agent);
+        claimService.get(CLAIM_ID, agent);
+        verify(claimPayloadLoader, times(1)).loadById(CLAIM_ID);
+
+        claimService.decide(CLAIM_ID, new ManualDecisionRequest(true, "Cache eviction check"), agent);
+
+        ClaimResponse afterDecide = claimService.get(CLAIM_ID, agent);
+        assertEquals(ClaimStatus.APPROVED, afterDecide.status());
+        verify(claimPayloadLoader, times(2)).loadById(CLAIM_ID);
     }
 
     @Test
