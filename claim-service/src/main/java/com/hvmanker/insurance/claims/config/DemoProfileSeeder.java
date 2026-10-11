@@ -12,9 +12,11 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.core.env.Environment;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.springframework.core.io.support.ResourcePatternResolver;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.UUID;
@@ -22,11 +24,17 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 @Component
 @Profile("demo")
 public class DemoProfileSeeder implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(DemoProfileSeeder.class);
+    static final String PERSONA_FIXTURES_LOCATION = "classpath:fixtures/personas/";
+    static final String PERSONA_FIXTURES_PATTERN = PERSONA_FIXTURES_LOCATION + "*.json";
+    static final String MISSING_PERSONA_FIXTURES_MESSAGE =
+            "demo profile active but no persona fixtures at " + PERSONA_FIXTURES_LOCATION;
+    static final Pattern DEMO_PASSWORD_ENV_PATTERN = Pattern.compile("^DEMO_[A-Z_]+_PASSWORD$");
 
     static final UUID AGENT_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
     static final UUID INSURED_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
@@ -52,20 +60,31 @@ public class DemoProfileSeeder implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) throws IOException {
         for (PersonaFixture persona : loadPersonaFixtures()) {
-            String rawPassword = requirePassword(persona.passwordEnv(), environment.getProperty(persona.passwordEnv()));
+            String passwordEnv = persona.passwordEnv();
+            String rawPassword = requirePassword(passwordEnv, environment.getProperty(passwordEnv));
             seedUser(persona.id(), persona.email(), persona.fullName(), persona.role(), rawPassword);
         }
     }
 
     List<PersonaFixture> loadPersonaFixtures() throws IOException {
-        PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
-        Resource[] resources = resolver.getResources("classpath:fixtures/personas/*.json");
+        return loadPersonaFixtures(new PathMatchingResourcePatternResolver());
+    }
+
+    List<PersonaFixture> loadPersonaFixtures(ResourcePatternResolver resolver) throws IOException {
+        Resource[] resources;
+        try {
+            resources = resolver.getResources(PERSONA_FIXTURES_PATTERN);
+        } catch (FileNotFoundException missingRoot) {
+            throw new IllegalStateException(MISSING_PERSONA_FIXTURES_MESSAGE, missingRoot);
+        }
         List<PersonaFixture> personas = new ArrayList<>();
         for (Resource resource : resources) {
             PersonaFixture persona = objectMapper.readValue(resource.getInputStream(), PersonaFixture.class);
-            if (persona.role() != null && persona.passwordEnv() != null) {
-                personas.add(persona);
-            }
+            requireValidDemoPasswordEnv(resource.getFilename(), persona.passwordEnv());
+            personas.add(persona);
+        }
+        if (personas.isEmpty()) {
+            throw new IllegalStateException(MISSING_PERSONA_FIXTURES_MESSAGE);
         }
         personas.sort(Comparator.comparing(PersonaFixture::email));
         return personas;
@@ -82,6 +101,13 @@ public class DemoProfileSeeder implements ApplicationRunner {
                 role,
                 Instant.now()));
         log.info("Demo portal user ready: email={}, role={}", normalizedEmail, role);
+    }
+
+    static void requireValidDemoPasswordEnv(String personaFixtureFile, String passwordEnv) {
+        if (passwordEnv == null || !DEMO_PASSWORD_ENV_PATTERN.matcher(passwordEnv).matches()) {
+            throw new IllegalStateException(
+                    "invalid passwordEnv in persona fixture " + personaFixtureFile + ": " + passwordEnv);
+        }
     }
 
     static String requirePassword(String propertyName, String value) {

@@ -19,7 +19,7 @@ UI: none
   - migrations.
 - Write the ADRs for the state machine, the decision table, the role and permission model, and authority limits. The set in `todos/architecture-decisions/` is the plan record. Slice 0 still has to confirm anything this audit contradicts.
 - Create `contracts/` with the envelope and event schemas and fixtures.
-- Define synthetic personas and seed data for all eight roles, including agent-to-client links.
+- Define synthetic personas and seed data for all eight roles, including agent-to-client links (`claim-service/src/main/resources/fixtures/personas/`).
 - Move the seeded credential out of the README into an environment-driven seed profile.
 
 ## Explicitly not in this slice

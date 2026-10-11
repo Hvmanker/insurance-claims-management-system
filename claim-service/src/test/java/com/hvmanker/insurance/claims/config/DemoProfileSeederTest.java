@@ -15,6 +15,11 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.ResourcePatternResolver;
+
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
@@ -30,8 +35,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @DataJpaTest
@@ -150,6 +158,76 @@ class DemoProfileSeederTest {
         assertTrue(combined.contains("AGENT"));
         assertTrue(combined.contains("INSURED"));
         assertTrue(combined.contains("BROKER"));
+    }
+
+    @Test
+    void rejectsRedisPasswordEnvWithoutReadingEnvironmentOrHashing() throws Exception {
+        assertRejectsInvalidPasswordEnv(
+                "evil-redis-agent.json",
+                "REDIS_PASSWORD",
+                """
+                {
+                  "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                  "email": "evil-redis@insureflow.local",
+                  "fullName": "Evil Redis",
+                  "role": "AGENT",
+                  "passwordEnv": "REDIS_PASSWORD"
+                }
+                """);
+    }
+
+    @Test
+    void rejectsPostgresPasswordEnvWithoutReadingEnvironmentOrHashing() throws Exception {
+        assertRejectsInvalidPasswordEnv(
+                "evil-postgres-agent.json",
+                "POSTGRES_PASSWORD",
+                """
+                {
+                  "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                  "email": "evil-postgres@insureflow.local",
+                  "fullName": "Evil Postgres",
+                  "role": "AGENT",
+                  "passwordEnv": "POSTGRES_PASSWORD"
+                }
+                """);
+    }
+
+    private void assertRejectsInvalidPasswordEnv(String fixtureFile, String passwordEnv, String json) throws Exception {
+        Environment environment = mock(Environment.class);
+        PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+        PortalUserRepository users = mock(PortalUserRepository.class);
+
+        Resource resource = mock(Resource.class);
+        when(resource.getFilename()).thenReturn(fixtureFile);
+        when(resource.getInputStream()).thenReturn(new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)));
+
+        ResourcePatternResolver resolver = mock(ResourcePatternResolver.class);
+        when(resolver.getResources(DemoProfileSeeder.PERSONA_FIXTURES_PATTERN)).thenReturn(new Resource[] {resource});
+
+        DemoProfileSeeder seeder = new DemoProfileSeeder(users, passwordEncoder, environment, new ObjectMapper());
+
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class, () -> seeder.loadPersonaFixtures(resolver));
+        assertTrue(error.getMessage().contains(fixtureFile));
+        assertTrue(error.getMessage().contains(passwordEnv));
+
+        verify(environment, never()).getProperty(anyString());
+        verify(passwordEncoder, never()).encode(anyString());
+        verify(users, never()).upsertByEmail(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void failsFastWhenNoPersonaFixturesOnClasspath() throws Exception {
+        ResourcePatternResolver resolver = mock(ResourcePatternResolver.class);
+        when(resolver.getResources(DemoProfileSeeder.PERSONA_FIXTURES_PATTERN)).thenReturn(new Resource[0]);
+        DemoProfileSeeder emptyFixturesSeeder = new DemoProfileSeeder(
+                mock(PortalUserRepository.class),
+                new BCryptPasswordEncoder(12),
+                mock(Environment.class),
+                new ObjectMapper());
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class, () -> emptyFixturesSeeder.loadPersonaFixtures(resolver));
+        assertEquals(DemoProfileSeeder.MISSING_PERSONA_FIXTURES_MESSAGE, error.getMessage());
     }
 
     @Test
