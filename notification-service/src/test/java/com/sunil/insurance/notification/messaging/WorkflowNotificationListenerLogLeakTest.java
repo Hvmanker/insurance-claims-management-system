@@ -16,6 +16,9 @@ import java.time.Instant;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import static com.sunil.insurance.common.KafkaTopics.CLAIM_APPROVED;
+import static com.sunil.insurance.common.KafkaTopics.CLAIM_REJECTED;
+import static com.sunil.insurance.common.KafkaTopics.CLAIM_SETTLED;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class WorkflowNotificationListenerLogLeakTest {
@@ -44,37 +47,43 @@ class WorkflowNotificationListenerLogLeakTest {
 
     @Test
     void onApproved_doesNotLogPolicyNumberOrAmount() {
+        UUID claimId = UUID.randomUUID();
         listener.onApproved(new ClaimApprovedEvent(
-                UUID.randomUUID(),
+                claimId,
                 LEAK_POLICY,
                 LEAK_AMOUNT,
                 "approver@example.com",
                 Instant.parse("2026-01-01T00:00:00Z")));
 
         assertNoSensitiveDataInLogs();
+        assertExpectedLogLine(claimId, CLAIM_APPROVED);
     }
 
     @Test
     void onRejected_doesNotLogPolicyNumberOrReason() {
+        UUID claimId = UUID.randomUUID();
         listener.onRejected(new ClaimRejectedEvent(
-                UUID.randomUUID(),
+                claimId,
                 LEAK_POLICY,
                 LEAK_REASON,
                 Instant.parse("2026-01-01T00:00:00Z")));
 
         assertNoSensitiveDataInLogs();
+        assertExpectedLogLine(claimId, CLAIM_REJECTED);
     }
 
     @Test
     void onSettled_doesNotLogPolicyNumberOrPaidAmount() {
+        UUID claimId = UUID.randomUUID();
         listener.onSettled(new ClaimSettledEvent(
-                UUID.randomUUID(),
+                claimId,
                 UUID.randomUUID(),
                 LEAK_POLICY,
                 LEAK_AMOUNT,
                 Instant.parse("2026-01-01T00:00:00Z")));
 
         assertNoSensitiveDataInLogs();
+        assertExpectedLogLine(claimId, CLAIM_SETTLED);
     }
 
     private void assertNoSensitiveDataInLogs() {
@@ -85,5 +94,12 @@ class WorkflowNotificationListenerLogLeakTest {
         assertThat(combined).doesNotContain(LEAK_POLICY);
         assertThat(combined).doesNotContain(LEAK_REASON);
         assertThat(combined).doesNotContain("987654.32");
+    }
+
+    private void assertExpectedLogLine(UUID claimId, String eventType) {
+        assertThat(logAppender.list).hasSize(1);
+        String message = logAppender.list.get(0).getFormattedMessage();
+        assertThat(message).contains("claimId=" + claimId);
+        assertThat(message).contains("eventType=" + eventType);
     }
 }

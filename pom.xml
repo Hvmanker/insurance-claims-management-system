@@ -24,8 +24,6 @@
         <java.version>21</java.version>
         <spring-boot.version>3.3.5</spring-boot.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <failIfNoTests>false</failIfNoTests>
-        <failIfNoSpecifiedTests>false</failIfNoSpecifiedTests>
     </properties>
 
     <dependencyManagement>
@@ -55,6 +53,11 @@
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>
                     <version>${spring-boot.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.2.5</version>
                 </plugin>
             </plugins>
         </pluginManagement>
