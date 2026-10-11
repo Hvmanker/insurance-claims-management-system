@@ -10,7 +10,9 @@ Accepted as a plan decision. The product changes are not built yet.
 
 ## Context
 
-The insurance claims repository already runs four Spring Boot services, PostgreSQL, Kafka, Redis cache, and a small portal. A rewrite would take one to two weeks and discard a working baseline. The owner has confirmed permission to extend this repo.
+The insurance claims repository already runs four Spring Boot services, PostgreSQL, Kafka, Redis cache, and a small portal. A rewrite would take one to two weeks and discard a working baseline.
+
+**Repository owner:** **Hvmanker** (GitHub). **Owner permission:** pending confirmation by **Hvmanker** to extend this repository for the InsureFlow auto-claims demo.
 
 Business problem: ship one focused auto-claims demo without spending the schedule on a new codebase.
 
@@ -24,7 +26,7 @@ Cost: avoiding a rewrite is the main saving. No new vendor.
 
 ## Decision
 
-Extend this repository. Do not start a parallel codebase. Slice 0 writes the owner's permission into the README and audits current behavior before feature work.
+Extend this repository. Do not start a parallel codebase. Slice 0.9 documents repository ownership and permission status in the README and this ADR, and audits current behavior before feature work.
 
 ## Alternatives Considered
 
@@ -37,7 +39,7 @@ Extend this repository. Do not start a parallel codebase. Slice 0 writes the own
 ### Fork without recording permission
 
 - Pros: faster locally.
-- Cons: the demo's story depends on a truthful credit and permission line.
+- Cons: the demo's story depends on a clear ownership and permission line.
 - Rejected: slice 0 makes the permission explicit.
 
 ## Consequences
@@ -70,7 +72,7 @@ Future products (home, medical) can be separate repos or modules. This repo stay
 
 ### Best practices
 
-Write down verified behavior before changing it. Credit the original author in the slice 8 README.
+Write down verified behavior before changing it. Record ownership and permission in the README and ADRs when the repo is public.
 
 ### Future optimization
 
