@@ -21,6 +21,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -54,6 +55,17 @@ class DemoProfileSeederTest {
     private static final String AGENT_PASSWORD = "UniqueAgentPasswordForTests-7x";
     private static final String INSURED_PASSWORD = "UniqueInsuredPasswordForTests-9z";
     private static final ApplicationArguments NO_ARGS = mock(ApplicationArguments.class);
+
+    private static final List<String> EXPECTED_LOG_LINES_IN_SEED_ORDER = List.of(
+            "Demo portal user ready: email=adjuster@insureflow.local, role=ADJUSTER",
+            "Demo portal user ready: email=admin@insureflow.local, role=ADMIN",
+            "Demo portal user ready: email=agent@insureflow.local, role=AGENT",
+            "Demo portal user ready: email=auditor@insureflow.local, role=AUDITOR",
+            "Demo portal user ready: email=broker@insureflow.local, role=BROKER",
+            "Demo portal user ready: email=finance@insureflow.local, role=FINANCE",
+            "Demo portal user ready: email=insured@insureflow.local, role=INSURED",
+            "Demo portal user ready: email=siu@insureflow.local, role=SIU",
+            "Demo portal user ready: email=supervisor@insureflow.local, role=SUPERVISOR");
 
     private static final Set<UserRole> EXPECTED_ROLES = EnumSet.of(
             UserRole.INSURED,
@@ -123,9 +135,12 @@ class DemoProfileSeederTest {
 
         assertEquals(9, appender.list.size());
 
-        String combined = appender.list.stream()
+        List<String> loggedMessages = appender.list.stream()
                 .map(ILoggingEvent::getFormattedMessage)
-                .collect(Collectors.joining("\n"));
+                .toList();
+        assertEquals(EXPECTED_LOG_LINES_IN_SEED_ORDER, loggedMessages);
+
+        String combined = String.join("\n", loggedMessages);
 
         assertFalse(combined.contains(AGENT_PASSWORD));
         assertFalse(combined.contains(INSURED_PASSWORD));
@@ -138,20 +153,59 @@ class DemoProfileSeederTest {
     }
 
     @Test
-    void failsFastWhenDemoPasswordMissingOnRun() throws Exception {
-        Environment environment = mock(Environment.class);
-        when(environment.getProperty(argThat(
-                prop -> prop != null && prop.startsWith("DEMO_") && !"DEMO_ADMIN_PASSWORD".equals(prop))))
-                .thenReturn("present");
-        when(environment.getProperty("DEMO_ADMIN_PASSWORD")).thenReturn("   ");
+    void failsFastWhenAgentPasswordMissing() throws Exception {
+        Environment environment = environmentWithPassword("DEMO_AGENT_PASSWORD", "");
         DemoProfileSeeder missingPasswordSeeder = new DemoProfileSeeder(
                 mock(PortalUserRepository.class),
                 new BCryptPasswordEncoder(12),
                 environment,
                 new ObjectMapper());
         IllegalStateException error = assertThrows(IllegalStateException.class, () -> missingPasswordSeeder.run(NO_ARGS));
-        assertTrue(error.getMessage().contains("DEMO_ADMIN_PASSWORD"));
+        assertTrue(error.getMessage().contains("DEMO_AGENT_PASSWORD"));
         assertFalse(error.getMessage().contains("present"));
+    }
+
+    @Test
+    void failsFastWhenInsuredPasswordMissing() throws Exception {
+        Environment environment = environmentWithPassword("DEMO_INSURED_PASSWORD", "");
+        DemoProfileSeeder missingPasswordSeeder = new DemoProfileSeeder(
+                mock(PortalUserRepository.class),
+                new BCryptPasswordEncoder(12),
+                environment,
+                new ObjectMapper());
+        IllegalStateException error = assertThrows(IllegalStateException.class, () -> missingPasswordSeeder.run(NO_ARGS));
+        assertTrue(error.getMessage().contains("DEMO_INSURED_PASSWORD"));
+        assertFalse(error.getMessage().contains("present"));
+    }
+
+    @Test
+    void failsFastWhenDemoPasswordsAreWhitespaceOnly() throws Exception {
+        Environment agentEnvironment = environmentWithPassword("DEMO_AGENT_PASSWORD", "   ");
+        DemoProfileSeeder agentSeeder = new DemoProfileSeeder(
+                mock(PortalUserRepository.class),
+                new BCryptPasswordEncoder(12),
+                agentEnvironment,
+                new ObjectMapper());
+        IllegalStateException agentError = assertThrows(IllegalStateException.class, () -> agentSeeder.run(NO_ARGS));
+        assertTrue(agentError.getMessage().contains("DEMO_AGENT_PASSWORD"));
+
+        Environment insuredEnvironment = environmentWithPassword("DEMO_INSURED_PASSWORD", "  ");
+        DemoProfileSeeder insuredSeeder = new DemoProfileSeeder(
+                mock(PortalUserRepository.class),
+                new BCryptPasswordEncoder(12),
+                insuredEnvironment,
+                new ObjectMapper());
+        IllegalStateException insuredError = assertThrows(IllegalStateException.class, () -> insuredSeeder.run(NO_ARGS));
+        assertTrue(insuredError.getMessage().contains("DEMO_INSURED_PASSWORD"));
+    }
+
+    private static Environment environmentWithPassword(String propertyName, String value) {
+        Environment environment = mock(Environment.class);
+        when(environment.getProperty(argThat(
+                prop -> prop != null && prop.startsWith("DEMO_") && !propertyName.equals(prop))))
+                .thenReturn("present");
+        when(environment.getProperty(propertyName)).thenReturn(value);
+        return environment;
     }
 
     @TestConfiguration
