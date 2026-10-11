@@ -31,7 +31,7 @@ CHECKS=(
   '11|A read between `decide` and its commit doesn'\''t put the stale status back into the cache. Without a test hook that pauses between decide and the commit, always report SKIPPED with that reason. No timing-based PASS.|check_11_decide_commit_cache_race'
   '12|The README URL works from a clean clone.|check_12_readme_dashboard_url'
   '13|TM-D: a claim over 10k stays SUBMITTED and the legacy AGENT decides it, run on the live stack.|check_13_tm_d_high_value_manual_decide'
-  '14|no stale com.sunil-typed messages on Kafka topics after rename (topics emptied/recreated)|check_14_kafka_topics_empty_after_up'
+  '14|no stale com.hvmanker-typed messages on Kafka topics after rename (topics emptied/recreated)|check_14_kafka_topics_empty_after_up'
   '15|Redis claims cache flushed on deploy after rename|check_15_redis_claims_cache_empty_after_up'
 )
 
@@ -621,7 +621,7 @@ check_13_tm_d_high_value_manual_decide() {
 # Checks 14–15: never PASS on the default `down -v` then `up` path — empty Kafka/Redis is
 # guaranteed and would be a false green. A real upgrade test must: (1) start a pre-rename
 # image stack, warm Redis with a cached claim entry, and publish at least one legacy
-# com.sunil-typed Kafka event; (2) run the documented topic reset / Redis claims flush;
+# com.hvmanker-typed Kafka event; (2) run the documented topic reset / Redis claims flush;
 # (3) deploy new images and verify they start, serve a claim read, and consume new events
 # without deserialization errors.
 check_14_kafka_topics_empty_after_up() {
