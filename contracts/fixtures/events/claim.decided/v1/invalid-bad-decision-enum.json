@@ -1,0 +1,18 @@
+{
+  "eventId": "a1000000-0000-4000-8000-000000000022",
+  "eventType": "claim.decided",
+  "schemaVersion": 1,
+  "aggregateId": "b2000000-0000-4000-8000-000000000022",
+  "occurredAt": "2026-10-01T13:05:00Z",
+  "correlationId": "c3000000-0000-4000-8000-000000000022",
+  "causationId": null,
+  "payload": {
+    "claimId": "b2000000-0000-4000-8000-000000000022",
+    "policyNumber": "SYN-AUTO-1022",
+    "decision": "MORE_INFO_REQUESTED",
+    "decidedAt": "2026-10-01T13:05:00Z",
+    "decidedBy": "adjuster.demo",
+    "approvedAmount": null,
+    "reason": "Need clearer photos"
+  }
+}

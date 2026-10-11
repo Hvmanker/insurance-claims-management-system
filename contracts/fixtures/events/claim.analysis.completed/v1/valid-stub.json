@@ -1,0 +1,69 @@
+{
+  "eventId": "a1000000-0000-4000-8000-000000000011",
+  "eventType": "claim.analysis.completed",
+  "schemaVersion": 1,
+  "aggregateId": "b2000000-0000-4000-8000-000000000011",
+  "occurredAt": "2026-10-01T12:30:00Z",
+  "correlationId": "c3000000-0000-4000-8000-000000000011",
+  "causationId": "a1000000-0000-4000-8000-000000000001",
+  "payload": {
+    "claimId": "b2000000-0000-4000-8000-000000000011",
+    "extracted": {
+      "estimateNumber": {
+        "value": "EST-20481",
+        "confidence": 0.94,
+        "evidence": {
+          "page": 1,
+          "textSpan": "Estimate # EST-20481"
+        }
+      },
+      "repairShopName": {
+        "value": "Northside Collision Center",
+        "confidence": 0.91,
+        "evidence": {
+          "page": 1,
+          "textSpan": "Northside Collision Center"
+        }
+      },
+      "dateOfLoss": {
+        "value": "2026-09-18",
+        "confidence": 0.88,
+        "evidence": {
+          "page": 1,
+          "textSpan": "Date of loss: 2026-09-18"
+        }
+      },
+      "lineItems": {
+        "value": [
+          {
+            "description": "Bumper assembly",
+            "amount": "3200.00"
+          },
+          {
+            "description": "Paint and materials",
+            "amount": "1300.00"
+          }
+        ],
+        "confidence": 0.86,
+        "evidence": {
+          "page": 2,
+          "textSpan": "Line items table"
+        }
+      },
+      "estimateTotal": {
+        "value": {
+          "amount": "4500.00",
+          "currency": "USD"
+        },
+        "confidence": 0.9,
+        "evidence": {
+          "page": 2,
+          "textSpan": "Total: USD 4500.00"
+        }
+      }
+    },
+    "flags": [],
+    "parserVersion": "repair-estimate-parser/0.1.0",
+    "modelVersion": "stub/0.0.0"
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "claim.decided v1",
+  "allOf": [
+    {
+      "$ref": "../../envelope.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "eventType": {
+          "const": "claim.decided"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "claimId",
+            "policyNumber",
+            "decision",
+            "decidedAt",
+            "decidedBy",
+            "approvedAmount",
+            "reason"
+          ],
+          "properties": {
+            "claimId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "policyNumber": {
+              "type": "string",
+              "minLength": 1
+            },
+            "decision": {
+              "type": "string",
+              "enum": ["approved", "rejected", "more-info"]
+            },
+            "decidedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "decidedBy": {
+              "type": "string",
+              "minLength": 1
+            },
+            "approvedAmount": {
+              "type": ["string", "null"],
+              "pattern": "^\\d+(\\.\\d{1,2})?$"
+            },
+            "reason": {
+              "type": ["string", "null"]
+            }
+          }
+        }
+      }
+    }
+  ]
+}
