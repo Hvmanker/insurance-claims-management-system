@@ -604,14 +604,24 @@ check_15_redis_claims_cache_empty_after_up() {
   emit_result "$nn" SKIPPED "$name" "upgrade path not exercised"
 }
 
-run_all_checks() {
-  local spec nn display fn
+validate_checks_array_functions() {
+  local spec fn missing=()
   for spec in "${CHECKS[@]}"; do
-    IFS='|' read -r nn display fn <<< "$spec"
+    IFS='|' read -r _ _ fn <<< "$spec"
     if ! declare -f "$fn" >/dev/null 2>&1; then
-      emit_result "$nn" SKIPPED "$display" "missing check function ${fn} in CHECKS array"
-      continue
+      missing+=("$fn")
     fi
+  done
+  if ((${#missing[@]} > 0)); then
+    printf 'ERROR: missing check function(s) for CHECKS array: %s\n' "${missing[*]}" >&2
+    exit 2
+  fi
+}
+
+run_all_checks() {
+  local spec fn
+  for spec in "${CHECKS[@]}"; do
+    IFS='|' read -r _ _ fn <<< "$spec"
     set +e
     "$fn"
     set -e
@@ -635,6 +645,7 @@ main() {
   require_env_file
   load_env_from_dotenv
   require_demo_env_vars_when_enabled
+  validate_checks_array_functions
 
   : > "$LOG_FILE"
   log_line "phase0-runtime-check starting at ${TIMESTAMP}"
