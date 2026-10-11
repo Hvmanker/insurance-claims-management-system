@@ -30,4 +30,4 @@ jobs:
           java-version: '21'
           cache: maven
       - run: mvn --batch-mode --define skipTests package
-      - run: docker compose build
+      - run: docker compose --env-file .env.example build
