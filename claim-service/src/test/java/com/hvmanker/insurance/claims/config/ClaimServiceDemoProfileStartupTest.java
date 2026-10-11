@@ -10,12 +10,9 @@ import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
-import java.util.EnumSet;
-import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest(classes = ClaimServiceApplication.class)
 @ActiveProfiles("demo")
@@ -48,28 +45,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 })
 class ClaimServiceDemoProfileStartupTest {
 
-    private static final Set<UserRole> EXPECTED_ROLES = EnumSet.of(
-            UserRole.INSURED,
-            UserRole.AGENT,
-            UserRole.BROKER,
-            UserRole.ADJUSTER,
-            UserRole.SUPERVISOR,
-            UserRole.SIU,
-            UserRole.FINANCE,
-            UserRole.AUDITOR,
-            UserRole.ADMIN);
+    private static final Map<String, UserRole> EXPECTED_SEEDED_USERS = Map.ofEntries(
+            Map.entry("adjuster@insureflow.local", UserRole.ADJUSTER),
+            Map.entry("admin@insureflow.local", UserRole.ADMIN),
+            Map.entry("agent@insureflow.local", UserRole.AGENT),
+            Map.entry("auditor@insureflow.local", UserRole.AUDITOR),
+            Map.entry("broker@insureflow.local", UserRole.BROKER),
+            Map.entry("finance@insureflow.local", UserRole.FINANCE),
+            Map.entry("insured@insureflow.local", UserRole.INSURED),
+            Map.entry("siu@insureflow.local", UserRole.SIU),
+            Map.entry("supervisor@insureflow.local", UserRole.SUPERVISOR));
 
     @Autowired
     private PortalUserRepository users;
 
     @Test
     void bootsWithDemoProfileAndSeedsPortalUsers() {
-        assertEquals(9, users.count());
-        Set<UserRole> seededRoles = users.findAll().stream()
-                .map(user -> user.getRole())
-                .collect(Collectors.toCollection(() -> EnumSet.noneOf(UserRole.class)));
-        assertEquals(EXPECTED_ROLES, seededRoles);
-        assertTrue(users.findByEmailIgnoreCase(DemoProfileSeeder.AGENT_EMAIL).isPresent());
-        assertTrue(users.findByEmailIgnoreCase(DemoProfileSeeder.INSURED_EMAIL).isPresent());
+        assertEquals(EXPECTED_SEEDED_USERS.size(), users.count());
+        EXPECTED_SEEDED_USERS.forEach((email, expectedRole) -> {
+            var user = users.findByEmailIgnoreCase(email).orElseThrow(
+                    () -> new AssertionError("Missing seeded portal user: " + email));
+            assertEquals(email, user.getEmail(), "username for " + email);
+            assertEquals(expectedRole, user.getRole(), "role for " + email);
+        });
     }
 }

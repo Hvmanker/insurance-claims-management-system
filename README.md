@@ -68,7 +68,7 @@ DEMO_INSURED_PASSWORD=replace-with-strong-demo-insured-password
 # Set the other DEMO_* passwords listed in `.env.example` if you use those personas.
 ```
 
-Demo portal users (when the profile is active) include legacy agent `agent@insureflow.local` and insured `insured@insureflow.local`. Use only the `DEMO_*` values from your `.env` file—never commit real passwords. Without the `demo` profile, `portal_users` stays empty until someone registers through the portal.
+Demo portal users (when the profile is active) include legacy agent `agent@insureflow.local` and insured `insured@insureflow.local`. Persona definitions (email and role only, no passwords) live in `claim-service/src/main/resources/fixtures/personas/` and are packaged on the claim-service classpath. Use only the `DEMO_*` values from your `.env` file—never commit real passwords. Without the `demo` profile, `portal_users` stays empty until someone registers through the portal.
 
 **One-time database reset:** migration `V2__add_portal_accounts_and_claim_reason.sql` no longer inserts demo users (they are seeded by the `demo` Spring profile from environment passwords). If you previously ran this project against an existing Postgres volume, reset once so Flyway can re-apply the changed migration:
 
