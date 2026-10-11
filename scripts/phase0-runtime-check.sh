@@ -167,12 +167,32 @@ log_repo_git_state() {
 }
 
 redis_scan_claims_keys() {
-  compose exec -T redis redis-cli -a "${REDIS_PASSWORD}" --no-auth-warning --scan --pattern 'claims*' 2>/dev/null || true
+  compose exec -T -e REDISCLI_AUTH="${REDIS_PASSWORD}" redis \
+    redis-cli --scan --pattern 'claims*' 2>/dev/null || true
 }
 
-redis_claims_cache_key_for_claim() {
-  local claim_id="$1"
-  redis_scan_claims_keys | grep -F "$claim_id" | head -n1 || true
+redis_scan_contains_claim_id() {
+  local claim_id="$1" scan_out
+  scan_out="$(redis_scan_claims_keys)"
+  grep -qF "$claim_id" <<< "$scan_out" 2>/dev/null
+}
+
+log_check_06_redis_scan() {
+  local phase="$1" scan_out line logged=0
+  scan_out="$(redis_scan_claims_keys)"
+  if [[ -z "${scan_out//[$'\n\r\t ']}" ]]; then
+    log_line "[06] redis-scan ${phase}: (none)"
+    return
+  fi
+  while IFS= read -r line; do
+    if [[ -n "$line" ]]; then
+      log_line "[06] redis-scan ${phase}: ${line}"
+      logged=1
+    fi
+  done <<< "$scan_out"
+  if [[ "$logged" -eq 0 ]]; then
+    log_line "[06] redis-scan ${phase}: (none)"
+  fi
 }
 
 wait_for_compose_healthy() {
@@ -416,7 +436,7 @@ check_05_demo_sign_in_after_fresh_volume() {
 check_06_live_cache_authorization_tm_a() {
   local nn="06" name
   name="$(check_display_name 5)"
-  local jar_a jar_b jar_broker jar_agent claim_id code status cache_key
+  local jar_a jar_b jar_broker jar_agent claim_id code status
 
   if [[ "${SPRING_PROFILES_ACTIVE:-}" != *demo* ]]; then
     emit_result "$nn" SKIPPED "$name" "demo profile required for seeded AGENT and BROKER users"
@@ -442,14 +462,19 @@ check_06_live_cache_authorization_tm_a() {
     emit_result "$nn" FAIL "$name" "AGENT login failed"
     return
   fi
+  log_check_06_redis_scan "before-read"
+  if redis_scan_contains_claim_id "$claim_id"; then
+    emit_result "$nn" FAIL "$name" "before-read: claims* key for claim already present before AGENT read"
+    return
+  fi
   code="$(curl_json GET "${BASE_URL}/claims/${claim_id}" "$jar_agent")"
   if [[ "$code" != "200" ]]; then
     emit_result "$nn" FAIL "$name" "AGENT warm-cache GET returned HTTP ${code}"
     return
   fi
-  cache_key="$(redis_claims_cache_key_for_claim "$claim_id")"
-  if [[ -z "$cache_key" ]]; then
-    emit_result "$nn" FAIL "$name" "Redis cache not in use"
+  log_check_06_redis_scan "after-read"
+  if ! redis_scan_contains_claim_id "$claim_id"; then
+    emit_result "$nn" FAIL "$name" "after-read: claims* key for claim missing after AGENT read (Redis cache not in use)"
     return
   fi
 
@@ -479,16 +504,17 @@ check_06_live_cache_authorization_tm_a() {
     emit_result "$nn" FAIL "$name" "AGENT decide returned HTTP ${code}"
     return
   fi
-  if [[ -n "$(redis_claims_cache_key_for_claim "$claim_id")" ]]; then
-    emit_result "$nn" FAIL "$name" "claims* Redis key still present for claim ${claim_id} after decide"
+  log_check_06_redis_scan "after-decide"
+  if redis_scan_contains_claim_id "$claim_id"; then
+    emit_result "$nn" FAIL "$name" "after-decide: claims* key for claim still present after decide"
     return
   fi
   status="$(claim_status "$jar_agent" "$claim_id" || true)"
   if [[ "$status" != "APPROVED" ]]; then
-    emit_result "$nn" FAIL "$name" "after decide AGENT GET status=${status:-unknown}, expected APPROVED (cache evicted)"
+    emit_result "$nn" FAIL "$name" "after-decide: AGENT GET status=${status:-unknown}, expected APPROVED"
     return
   fi
-  emit_result "$nn" PASS "$name" "INSURED B and BROKER HTTP 404 after AGENT warm; Redis key ${cache_key} evicted; status APPROVED"
+  emit_result "$nn" PASS "$name" "INSURED B and BROKER HTTP 404; Redis absent before read, present after read, absent after decide; status APPROVED"
 }
 
 check_07_tm_b_kafka_integration() {
