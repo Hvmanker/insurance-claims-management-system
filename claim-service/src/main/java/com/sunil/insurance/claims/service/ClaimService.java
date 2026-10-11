@@ -14,7 +14,6 @@ import com.sunil.insurance.claims.web.ClaimTimelineEntry;
 import com.sunil.insurance.common.ClaimStatus;
 import com.sunil.insurance.common.events.ClaimSubmittedEvent;
 import com.sunil.insurance.common.events.ManualClaimDecisionEvent;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,11 +33,17 @@ public class ClaimService {
     private final ClaimRepository claimRepository;
     private final ClaimEventRepository claimEventRepository;
     private final ClaimEventPublisher eventPublisher;
+    private final CachedClaimReader cachedClaimReader;
 
-    public ClaimService(ClaimRepository claimRepository, ClaimEventRepository claimEventRepository, ClaimEventPublisher eventPublisher) {
+    public ClaimService(
+            ClaimRepository claimRepository,
+            ClaimEventRepository claimEventRepository,
+            ClaimEventPublisher eventPublisher,
+            CachedClaimReader cachedClaimReader) {
         this.claimRepository = claimRepository;
         this.claimEventRepository = claimEventRepository;
         this.eventPublisher = eventPublisher;
+        this.cachedClaimReader = cachedClaimReader;
     }
 
     @Transactional
@@ -72,9 +77,9 @@ public class ClaimService {
     }
 
     @Transactional(readOnly = true)
-    @Cacheable(cacheNames = "claims", key = "#p0")
     public ClaimResponse get(UUID claimId, PortalUser user) {
-        return toResponse(findVisibleClaim(claimId, user));
+        findVisibleClaim(claimId, user);
+        return cachedClaimReader.getById(claimId);
     }
 
     @Transactional(readOnly = true)
@@ -118,6 +123,7 @@ public class ClaimService {
     }
 
     @Transactional
+    @CacheEvict(cacheNames = "claims", key = "#p0")
     public ClaimResponse decide(UUID claimId, ManualDecisionRequest request, PortalUser agent) {
         if (agent.getRole() != UserRole.AGENT) {
             throw new ResponseStatusException(FORBIDDEN, "Only agents can make claim decisions");
