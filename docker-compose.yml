@@ -48,10 +48,10 @@ services:
 
   claim-service:
     build:
-      context: ./claim-service
-      dockerfile: ../Dockerfile.service
+      context: .
+      dockerfile: Dockerfile.service
       args:
-        JAR_FILE: target/claim-service-0.1.0-SNAPSHOT.jar
+        JAR_FILE: claim-service/target/claim-service-0.1.0-SNAPSHOT.jar
     environment:
       JAVA_TOOL_OPTIONS: -Xms64m -Xmx192m
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
@@ -88,10 +88,10 @@ services:
 
   approval-service:
     build:
-      context: ./approval-service
-      dockerfile: ../Dockerfile.service
+      context: .
+      dockerfile: Dockerfile.service
       args:
-        JAR_FILE: target/approval-service-0.1.0-SNAPSHOT.jar
+        JAR_FILE: approval-service/target/approval-service-0.1.0-SNAPSHOT.jar
     environment:
       JAVA_TOOL_OPTIONS: -Xms64m -Xmx160m
       DB_URL: ${DB_URL:?}
@@ -112,10 +112,10 @@ services:
 
   settlement-service:
     build:
-      context: ./settlement-service
-      dockerfile: ../Dockerfile.service
+      context: .
+      dockerfile: Dockerfile.service
       args:
-        JAR_FILE: target/settlement-service-0.1.0-SNAPSHOT.jar
+        JAR_FILE: settlement-service/target/settlement-service-0.1.0-SNAPSHOT.jar
     environment:
       JAVA_TOOL_OPTIONS: -Xms64m -Xmx160m
       DB_URL: ${DB_URL:?}
@@ -136,10 +136,10 @@ services:
 
   notification-service:
     build:
-      context: ./notification-service
-      dockerfile: ../Dockerfile.service
+      context: .
+      dockerfile: Dockerfile.service
       args:
-        JAR_FILE: target/notification-service-0.1.0-SNAPSHOT.jar
+        JAR_FILE: notification-service/target/notification-service-0.1.0-SNAPSHOT.jar
     environment:
       JAVA_TOOL_OPTIONS: -Xms64m -Xmx128m
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:?}

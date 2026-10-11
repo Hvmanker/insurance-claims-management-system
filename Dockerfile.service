@@ -1,6 +1,31 @@
-FROM eclipse-temurin:21-jre
+# syntax=docker/dockerfile:1
+
+FROM maven:3.9-eclipse-temurin-21 AS builder
+
+WORKDIR /build
+
 ARG JAR_FILE
+
+COPY pom.xml .
+COPY common ./common
+COPY claim-service ./claim-service
+COPY approval-service ./approval-service
+COPY settlement-service ./settlement-service
+COPY notification-service ./notification-service
+
+RUN MODULE="$(echo "${JAR_FILE}" | cut -d/ -f1)" \
+    && mvn --batch-mode -pl "${MODULE}" -am -DskipTests package
+
+FROM eclipse-temurin:21-jre
+
+ARG JAR_FILE
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wget \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
-COPY ${JAR_FILE} app.jar
+COPY --from=builder /build/${JAR_FILE} app.jar
+
 EXPOSE 8081 8082 8083 8084
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
