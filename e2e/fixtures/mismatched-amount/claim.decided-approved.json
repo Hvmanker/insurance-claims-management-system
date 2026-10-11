@@ -1,0 +1,18 @@
+{
+  "eventId": "f6000000-0000-4000-8000-000000000020",
+  "eventType": "claim.decided",
+  "schemaVersion": 1,
+  "aggregateId": "b2000000-0000-4000-8000-00000000e401",
+  "occurredAt": "2026-10-07T09:00:00Z",
+  "correlationId": "c3000000-0000-4000-8000-00000000e401",
+  "causationId": null,
+  "payload": {
+    "claimId": "b2000000-0000-4000-8000-00000000e401",
+    "policyNumber": "SYN-AUTO-E401",
+    "decision": "approved",
+    "decidedAt": "2026-10-07T09:00:00Z",
+    "decidedBy": "adjuster.demo",
+    "approvedAmount": "5200.00",
+    "reason": null
+  }
+}

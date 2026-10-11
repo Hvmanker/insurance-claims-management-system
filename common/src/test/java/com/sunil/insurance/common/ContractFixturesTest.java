@@ -9,6 +9,8 @@ import com.networknt.schema.SchemaValidatorsConfig;
 import com.networknt.schema.SpecVersion;
 import com.networknt.schema.ValidationMessage;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -25,7 +27,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ContractFixturesTest {
@@ -33,51 +35,115 @@ class ContractFixturesTest {
     private static final JsonSchemaFactory SCHEMA_FACTORY =
             JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012);
 
-    @Test
-    void contractFixturesMatchEventSchemas() throws IOException {
-        Path repoRoot = findRepoRoot();
-        Path contractsRoot = repoRoot.resolve("contracts");
-        Path fixturesRoot = contractsRoot.resolve("fixtures/events");
+    private static final List<String> REQUIRED_EVENT_TYPES = List.of(
+            "claim.submitted",
+            "claim.analysis.completed",
+            "claim.decided",
+            "settlement.simulated");
 
+    record ContractFixtureCase(Path fixturePath, String eventType, boolean expectValid, String expectedErrorKeyword) {
+        @Override
+        public String toString() {
+            return fixturePath.toString();
+        }
+    }
+
+    record E2eFixtureCase(Path fixturePath, String scenario) {
+        @Override
+        public String toString() {
+            return fixturePath.toString();
+        }
+    }
+
+    static Stream<ContractFixtureCase> contractFixtureCases() throws IOException {
+        Path repoRoot = findRepoRoot();
+        Path fixturesRoot = repoRoot.resolve("contracts/fixtures/events");
+        List<ContractFixtureCase> cases = new ArrayList<>();
+
+        try (Stream<Path> eventTypes = Files.list(fixturesRoot)) {
+            eventTypes.filter(Files::isDirectory)
+                    .sorted()
+                    .forEach(eventTypeDir -> {
+                        String eventType = eventTypeDir.getFileName().toString();
+                        Path versionDir = eventTypeDir.resolve("v1");
+                        if (!Files.isDirectory(versionDir)) {
+                            return;
+                        }
+                        try (Stream<Path> fixtures = Files.list(versionDir)) {
+                            fixtures.filter(path -> path.getFileName().toString().endsWith(".json"))
+                                    .sorted()
+                                    .forEach(fixture -> {
+                                        String fileName = fixture.getFileName().toString();
+                                        if (fileName.startsWith("valid-")) {
+                                            cases.add(new ContractFixtureCase(fixture, eventType, true, null));
+                                        } else if (fileName.startsWith("invalid-")) {
+                                            cases.add(new ContractFixtureCase(
+                                                    fixture,
+                                                    eventType,
+                                                    false,
+                                                    expectedInvalidFixtureKeyword(fileName)));
+                                        }
+                                    });
+                        } catch (IOException exception) {
+                            throw new UncheckedIOException(exception);
+                        }
+                    });
+        }
+        return cases.stream();
+    }
+
+    static Stream<E2eFixtureCase> e2eFixtureCases() throws IOException {
+        Path e2eRoot = findRepoRoot().resolve("e2e/fixtures");
+        List<E2eFixtureCase> cases = new ArrayList<>();
+        try (Stream<Path> scenarios = Files.walk(e2eRoot)) {
+            scenarios.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".json"))
+                    .sorted()
+                    .forEach(path -> {
+                        Path scenario = e2eRoot.relativize(path.getParent());
+                        cases.add(new E2eFixtureCase(path, scenario.toString()));
+                    });
+        }
+        return cases.stream();
+    }
+
+    @ParameterizedTest
+    @MethodSource("contractFixtureCases")
+    void contractFixtureMatchesSchema(ContractFixtureCase fixtureCase) throws IOException {
+        Path repoRoot = findRepoRoot();
+        Path schemaPath = repoRoot.resolve("contracts/events")
+                .resolve(fixtureCase.eventType())
+                .resolve("v1.schema.json");
+        JsonSchema schema = loadSchema(schemaPath);
+        JsonNode document = OBJECT_MAPPER.readTree(fixtureCase.fixturePath().toFile());
+        Set<ValidationMessage> errors = schema.validate(document);
+
+        if (fixtureCase.expectValid()) {
+            assertTrue(errors.isEmpty(), () -> describeErrors(fixtureCase.fixturePath(), errors));
+            return;
+        }
+
+        assertTrue(!errors.isEmpty(), () -> "Expected validation failure for " + fixtureCase.fixturePath());
+        assertTrue(
+                errorsContainKeyword(errors, fixtureCase.expectedErrorKeyword()),
+                () -> "Expected keyword '" + fixtureCase.expectedErrorKeyword() + "' in errors for "
+                        + fixtureCase.fixturePath() + ": " + formatErrors(errors));
+    }
+
+    @Test
+    void eachEventSchemaHasAtLeastOneValidAndInvalidFixture() throws IOException {
         Map<String, Integer> validCounts = new HashMap<>();
         Map<String, Integer> invalidCounts = new HashMap<>();
 
-        try (Stream<Path> eventTypes = Files.list(fixturesRoot)) {
-            for (Path eventTypeDir : eventTypes.sorted().collect(Collectors.toList())) {
-                if (!Files.isDirectory(eventTypeDir)) {
-                    continue;
-                }
-                String eventType = eventTypeDir.getFileName().toString();
-                Path versionDir = eventTypeDir.resolve("v1");
-                if (!Files.isDirectory(versionDir)) {
-                    continue;
-                }
-
-                JsonSchema schema = loadSchema(contractsRoot.resolve("events").resolve(eventType).resolve("v1.schema.json"));
-
-                try (Stream<Path> fixtures = Files.list(versionDir)) {
-                    for (Path fixture : fixtures.sorted().collect(Collectors.toList())) {
-                        String fileName = fixture.getFileName().toString();
-                        JsonNode document = OBJECT_MAPPER.readTree(fixture.toFile());
-                        Set<ValidationMessage> errors = schema.validate(document);
-
-                        if (fileName.startsWith("valid-")) {
-                            validCounts.merge(eventType, 1, Integer::sum);
-                            assertTrue(errors.isEmpty(), () -> describeErrors(eventType, fixture, errors));
-                        } else if (fileName.startsWith("invalid-")) {
-                            invalidCounts.merge(eventType, 1, Integer::sum);
-                            assertFalse(errors.isEmpty(), () -> "Expected validation failure for " + fixture);
-                        }
-                    }
-                }
+        contractFixtureCases().forEach(caseEntry -> {
+            if (caseEntry.expectValid()) {
+                validCounts.merge(caseEntry.eventType(), 1, Integer::sum);
+            } else {
+                invalidCounts.merge(caseEntry.eventType(), 1, Integer::sum);
             }
-        }
+        });
 
-        for (String eventType : List.of(
-                "claim.submitted",
-                "claim.analysis.completed",
-                "claim.decided",
-                "settlement.simulated")) {
+        for (String eventType : REQUIRED_EVENT_TYPES) {
             assertTrue(validCounts.getOrDefault(eventType, 0) >= 1,
                     () -> "Missing valid fixture for " + eventType);
             assertTrue(invalidCounts.getOrDefault(eventType, 0) >= 1,
@@ -85,37 +151,71 @@ class ContractFixturesTest {
         }
     }
 
-    @Test
-    void e2eScenarioFixturesValidateAndExerciseIdempotencyAndOrdering() throws IOException {
+    @ParameterizedTest
+    @MethodSource("e2eFixtureCases")
+    void e2eFixtureMatchesEventSchema(E2eFixtureCase fixtureCase) throws IOException {
         Path repoRoot = findRepoRoot();
-        Path contractsRoot = repoRoot.resolve("contracts");
-        Path e2eRoot = repoRoot.resolve("e2e/fixtures");
+        JsonNode document = OBJECT_MAPPER.readTree(fixtureCase.fixturePath().toFile());
+        String eventType = document.get("eventType").asText();
+        Path schemaPath = repoRoot.resolve("contracts/events").resolve(eventType).resolve("v1.schema.json");
+        JsonSchema schema = loadSchema(schemaPath);
+        Set<ValidationMessage> errors = schema.validate(document);
+        assertTrue(errors.isEmpty(), () -> describeErrors(fixtureCase.fixturePath(), errors));
+    }
 
-        Path duplicateDir = e2eRoot.resolve("duplicate-event-id");
-        List<JsonNode> duplicateEvents = loadScenarioEvents(duplicateDir);
-        assertEquals(2, duplicateEvents.size(), "duplicate-event-id scenario expects two events");
-        String sharedEventId = duplicateEvents.get(0).get("eventId").asText();
-        assertEquals(sharedEventId, duplicateEvents.get(1).get("eventId").asText());
+    @Test
+    void duplicateEventIdScenarioUsesSameEventId() throws IOException {
+        List<JsonNode> events = loadScenarioEvents(findRepoRoot().resolve("e2e/fixtures/duplicate-event-id"));
+        assertEquals(2, events.size());
+        assertEquals(events.get(0).get("eventId").asText(), events.get(1).get("eventId").asText());
+    }
 
-        Path outOfOrderDir = e2eRoot.resolve("out-of-order-occurred-at");
-        List<JsonNode> outOfOrderEvents = loadScenarioEvents(outOfOrderDir);
-        assertEquals(2, outOfOrderEvents.size(), "out-of-order-occurred-at scenario expects two events");
-        String sharedAggregateId = outOfOrderEvents.get(0).get("aggregateId").asText();
-        assertEquals(sharedAggregateId, outOfOrderEvents.get(1).get("aggregateId").asText());
+    @Test
+    void duplicateSubmissionScenarioUsesSameAggregateId() throws IOException {
+        List<JsonNode> events = loadScenarioEvents(findRepoRoot().resolve("e2e/fixtures/duplicate-submission"));
+        assertEquals(2, events.size());
+        assertEquals(events.get(0).get("aggregateId").asText(), events.get(1).get("aggregateId").asText());
+        assertEquals("claim.submitted", events.get(0).get("eventType").asText());
+        assertEquals("claim.submitted", events.get(1).get("eventType").asText());
+    }
 
-        List<Instant> occurredAt = outOfOrderEvents.stream()
-                .map(node -> Instant.parse(node.get("occurredAt").asText()))
-                .sorted()
-                .toList();
-        assertTrue(occurredAt.get(0).isBefore(occurredAt.get(1)),
-                "Scenario should include two distinct occurredAt timestamps for the same aggregate");
+    @Test
+    void outOfOrderScenarioHasDecidedBeforeSubmitted() throws IOException {
+        Path scenarioDir = findRepoRoot().resolve("e2e/fixtures/out-of-order");
+        JsonNode submitted = readFixture(scenarioDir.resolve("claim.submitted.json"));
+        JsonNode decided = readFixture(scenarioDir.resolve("claim.decided-earlier-occurred-at.json"));
 
-        for (JsonNode event : concat(duplicateEvents, outOfOrderEvents)) {
-            String eventType = event.get("eventType").asText();
-            JsonSchema schema = loadSchema(contractsRoot.resolve("events").resolve(eventType).resolve("v1.schema.json"));
-            Set<ValidationMessage> errors = schema.validate(event);
-            assertTrue(errors.isEmpty(), () -> describeErrors(eventType, null, errors));
+        assertEquals(submitted.get("aggregateId").asText(), decided.get("aggregateId").asText());
+        Instant submittedAt = Instant.parse(submitted.get("occurredAt").asText());
+        Instant decidedAt = Instant.parse(decided.get("occurredAt").asText());
+        assertTrue(decidedAt.isBefore(submittedAt),
+                "claim.decided occurredAt should be earlier than claim.submitted for the same aggregate");
+    }
+
+    @Test
+    void mismatchedAmountScenarioUsesDifferentDecimalStrings() throws IOException {
+        Path scenarioDir = findRepoRoot().resolve("e2e/fixtures/mismatched-amount");
+        JsonNode decided = readFixture(scenarioDir.resolve("claim.decided-approved.json"));
+        JsonNode settlement = readFixture(scenarioDir.resolve("settlement.simulated.json"));
+
+        assertEquals(decided.get("aggregateId").asText(), settlement.get("aggregateId").asText());
+        String approvedAmount = decided.get("payload").get("approvedAmount").asText();
+        String paidAmount = settlement.get("payload").get("paidAmount").asText();
+        assertNotEquals(approvedAmount, paidAmount);
+    }
+
+    private static String expectedInvalidFixtureKeyword(String fileName) {
+        if (fileName.contains("missing-")) {
+            return "required";
         }
+        if (fileName.contains("extra-")) {
+            return "additionalProperties";
+        }
+        if (fileName.contains("bad-decision")) {
+            return "enum";
+        }
+        throw new IllegalArgumentException("Unmapped invalid fixture name (expected missing-, extra-, or bad-decision): "
+                + fileName);
     }
 
     private static JsonSchema loadSchema(Path schemaPath) {
@@ -124,6 +224,10 @@ class ContractFixturesTest {
         }
         SchemaValidatorsConfig config = SchemaValidatorsConfig.builder().build();
         return SCHEMA_FACTORY.getSchema(SchemaLocation.of(schemaPath.toUri().toString()), config);
+    }
+
+    private static JsonNode readFixture(Path path) throws IOException {
+        return OBJECT_MAPPER.readTree(path.toFile());
     }
 
     private static List<JsonNode> loadScenarioEvents(Path directory) throws IOException {
@@ -155,19 +259,29 @@ class ContractFixturesTest {
                 + System.getProperty("user.dir"));
     }
 
-    private static String describeErrors(String eventType, Path fixture, Set<ValidationMessage> errors) {
-        String target = fixture == null ? eventType : fixture.toString();
-        String details = errors.stream()
+    private static boolean errorsContainKeyword(Set<ValidationMessage> errors, String keyword) {
+        return errors.stream().anyMatch(error -> errorText(error).contains(normalizeKeyword(keyword)));
+    }
+
+    private static String errorText(ValidationMessage error) {
+        return Stream.of(error.getType(), error.getCode(), error.getMessage(), error.getMessageKey())
+                .filter(part -> part != null && !part.isBlank())
+                .map(ContractFixturesTest::normalizeKeyword)
+                .collect(Collectors.joining(" "));
+    }
+
+    private static String normalizeKeyword(String value) {
+        return value.toLowerCase().replaceAll("[^a-z0-9]", "");
+    }
+
+    private static String formatErrors(Set<ValidationMessage> errors) {
+        return errors.stream()
                 .map(ValidationMessage::getMessage)
                 .sorted()
                 .collect(Collectors.joining("; "));
-        return "Validation failed for " + target + ": " + details;
     }
 
-    private static List<JsonNode> concat(List<JsonNode> first, List<JsonNode> second) {
-        List<JsonNode> combined = new ArrayList<>(first.size() + second.size());
-        combined.addAll(first);
-        combined.addAll(second);
-        return combined;
+    private static String describeErrors(Path fixture, Set<ValidationMessage> errors) {
+        return "Validation failed for " + fixture + ": " + formatErrors(errors);
     }
 }
