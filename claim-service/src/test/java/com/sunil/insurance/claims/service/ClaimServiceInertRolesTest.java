@@ -20,8 +20,6 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.when;
 import static org.springframework.http.HttpStatus.FORBIDDEN;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
 
@@ -46,9 +44,8 @@ class ClaimServiceInertRolesTest {
     })
     void newRolesHaveNoClaimVisibility(UserRole role) {
         inertUser = portalUser(role, UUID.randomUUID());
-        when(claimRepository.existsById(CLAIM_ID)).thenReturn(true);
 
-        assertTrue(claimService.recentClaims(inertUser).isEmpty());
+        assertEquals(0, claimService.recentClaims(inertUser).size());
 
         ClaimService.ClaimDashboardSummary summary = claimService.dashboardSummary(inertUser);
         assertEquals(0, summary.totalClaims());
@@ -60,7 +57,7 @@ class ClaimServiceInertRolesTest {
 
         ResponseStatusException getError = assertThrows(ResponseStatusException.class,
                 () -> claimService.get(CLAIM_ID, inertUser));
-        assertTrue(getError.getStatusCode() == NOT_FOUND || getError.getStatusCode() == FORBIDDEN);
+        assertEquals(NOT_FOUND, getError.getStatusCode());
 
         ManualDecisionRequest decision = new ManualDecisionRequest(true, "Looks valid");
         ResponseStatusException decideError = assertThrows(ResponseStatusException.class,
