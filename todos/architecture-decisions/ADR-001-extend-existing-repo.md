@@ -12,9 +12,7 @@ Accepted as a plan decision. The product changes are not built yet.
 
 The insurance claims repository already runs four Spring Boot services, PostgreSQL, Kafka, Redis cache, and a small portal. A rewrite would take one to two weeks and discard a working baseline.
 
-**Owner permission:** pending confirmation by **Hvmanker**.
-
-**Original work:** The baseline implementation was authored by **sunilguntupalli** ([`sunilguntupalli/insurance-claims-management-system`](https://github.com/sunilguntupalli/insurance-claims-management-system) on GitHub), as reflected in the prior README CI badge and `com.sunil.insurance` package namespace. Slice 0.9 credits that upstream project in this repo's README.
+**Repository owner:** **Hvmanker** (GitHub). **Owner permission:** pending confirmation by **Hvmanker** to extend this repository for the InsureFlow auto-claims demo.
 
 Business problem: ship one focused auto-claims demo without spending the schedule on a new codebase.
 
@@ -28,7 +26,7 @@ Cost: avoiding a rewrite is the main saving. No new vendor.
 
 ## Decision
 
-Extend this repository. Do not start a parallel codebase. Slice 0.9 documents owner permission status and upstream author credit in the README and this ADR, and audits current behavior before feature work.
+Extend this repository. Do not start a parallel codebase. Slice 0.9 documents repository ownership and permission status in the README and this ADR, and audits current behavior before feature work.
 
 ## Alternatives Considered
 
@@ -41,7 +39,7 @@ Extend this repository. Do not start a parallel codebase. Slice 0.9 documents ow
 ### Fork without recording permission
 
 - Pros: faster locally.
-- Cons: the demo's story depends on a truthful credit and permission line.
+- Cons: the demo's story depends on a clear ownership and permission line.
 - Rejected: slice 0 makes the permission explicit.
 
 ## Consequences
@@ -74,7 +72,7 @@ Future products (home, medical) can be separate repos or modules. This repo stay
 
 ### Best practices
 
-Write down verified behavior before changing it. Credit the original author in the README (done in slice 0.9).
+Write down verified behavior before changing it. Record ownership and permission in the README and ADRs when the repo is public.
 
 ### Future optimization
 
