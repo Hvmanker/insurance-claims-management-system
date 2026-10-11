@@ -31,7 +31,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends wget \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 app \
-    && useradd --system --uid 10001 --gid 10001 --home-dir /app app
+    && useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /app app \
+    && install -d -o app -g app -m 0750 /app
 
 WORKDIR /app
 COPY --from=build --chown=app:app /build/${JAR_FILE} app.jar
