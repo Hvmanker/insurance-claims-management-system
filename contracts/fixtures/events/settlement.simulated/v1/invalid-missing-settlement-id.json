@@ -1,0 +1,15 @@
+{
+  "eventId": "a1000000-0000-4000-8000-000000000032",
+  "eventType": "settlement.simulated",
+  "schemaVersion": 1,
+  "aggregateId": "b2000000-0000-4000-8000-000000000032",
+  "occurredAt": "2026-10-01T14:05:00Z",
+  "correlationId": "c3000000-0000-4000-8000-000000000032",
+  "causationId": null,
+  "payload": {
+    "claimId": "b2000000-0000-4000-8000-000000000032",
+    "policyNumber": "SYN-AUTO-1032",
+    "paidAmount": "1200.00",
+    "settledAt": "2026-10-01T14:05:00Z"
+  }
+}

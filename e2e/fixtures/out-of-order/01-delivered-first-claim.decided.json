@@ -1,0 +1,18 @@
+{
+  "eventId": "f6000000-0000-4000-8000-000000000011",
+  "eventType": "claim.decided",
+  "schemaVersion": 1,
+  "aggregateId": "b2000000-0000-4000-8000-00000000e301",
+  "occurredAt": "2026-10-06T14:00:00Z",
+  "correlationId": "c3000000-0000-4000-8000-00000000e301",
+  "causationId": null,
+  "payload": {
+    "claimId": "b2000000-0000-4000-8000-00000000e301",
+    "policyNumber": "SYN-AUTO-E301",
+    "decision": "approved",
+    "decidedAt": "2026-10-06T14:00:00Z",
+    "decidedBy": "system-rules",
+    "approvedAmount": "4200.00",
+    "reason": null
+  }
+}
