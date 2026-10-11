@@ -9,8 +9,8 @@ spring:
     name: approval-service
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/claims}
-    username: ${DB_USERNAME:claims}
-    password: ${DB_PASSWORD:claims}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
