@@ -37,8 +37,6 @@ class ClaimServiceStatusTitleTest {
     void statusTitleAnalysisPending() {
         String title = claimService.statusTitle(ClaimStatus.ANALYSIS_PENDING);
         assertEquals("Claim sent for analysis", title);
-        assertNotNull(title);
-        assertFalse(title.isBlank());
         assertNotEquals(claimService.statusTitle(ClaimStatus.SUBMITTED), title);
         for (ClaimStatus status : ClaimStatus.values()) {
             String statusTitle = claimService.statusTitle(status);
@@ -56,8 +54,6 @@ class ClaimServiceStatusTitleTest {
     void statusTitleReviewReady() {
         String title = claimService.statusTitle(ClaimStatus.REVIEW_READY);
         assertEquals("Claim ready for review", title);
-        assertNotNull(title);
-        assertFalse(title.isBlank());
         assertNotEquals(claimService.statusTitle(ClaimStatus.SUBMITTED), title);
         for (ClaimStatus status : ClaimStatus.values()) {
             String statusTitle = claimService.statusTitle(status);
