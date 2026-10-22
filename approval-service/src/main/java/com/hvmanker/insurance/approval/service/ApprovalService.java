@@ -9,6 +9,8 @@ import com.hvmanker.insurance.approval.domain.ClaimApprovalRepository;
 import com.hvmanker.insurance.approval.domain.ClaimWorkflow;
 import com.hvmanker.insurance.approval.domain.ClaimWorkflowRepository;
 import com.hvmanker.insurance.approval.domain.ClaimWorkflowStore;
+import com.hvmanker.insurance.approval.domain.DecisionAudit;
+import com.hvmanker.insurance.approval.domain.DecisionAuditRepository;
 import com.hvmanker.insurance.approval.domain.WorkflowStatus;
 import com.hvmanker.insurance.approval.web.InternalDecisionLookupResponse;
 import com.hvmanker.insurance.approval.web.InternalDecisionRequest;
@@ -40,6 +42,8 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 public class ApprovalService {
     private static final Logger log = LoggerFactory.getLogger(ApprovalService.class);
     private static final String CLAIM_SUBMITTED_CONSUMER_GROUP = "approval-service";
+    private static final String OUTCOME_CONFLICT = "CONFLICT";
+    private static final String REASON_CLAIM_ALREADY_DECIDED = "CLAIM_ALREADY_DECIDED";
 
     private final ClaimApprovalRepository approvalRepository;
     private final ClaimWorkflowRepository claimWorkflowRepository;
@@ -47,7 +51,7 @@ public class ApprovalService {
     private final InboxGuard inboxGuard;
     private final OutboxWriter outboxWriter;
     private final ObjectMapper objectMapper;
-    private final DecisionConflictRecorder decisionConflictRecorder;
+    private final DecisionAuditRepository decisionAuditRepository;
     private final TransactionTemplate transactionTemplate;
 
     public ApprovalService(
@@ -57,7 +61,7 @@ public class ApprovalService {
             InboxGuard inboxGuard,
             OutboxWriter outboxWriter,
             ObjectMapper objectMapper,
-            DecisionConflictRecorder decisionConflictRecorder,
+            DecisionAuditRepository decisionAuditRepository,
             TransactionTemplate transactionTemplate) {
         this.approvalRepository = approvalRepository;
         this.claimWorkflowRepository = claimWorkflowRepository;
@@ -65,7 +69,7 @@ public class ApprovalService {
         this.inboxGuard = inboxGuard;
         this.outboxWriter = outboxWriter;
         this.objectMapper = objectMapper;
-        this.decisionConflictRecorder = decisionConflictRecorder;
+        this.decisionAuditRepository = decisionAuditRepository;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -95,11 +99,12 @@ public class ApprovalService {
     }
 
     public DecisionResult recordHumanDecision(UUID claimId, InternalDecisionRequest request) {
+        ApprovalDecision action = InternalDecisionValidator.validate(request);
         ClaimWorkflow workflow = claimWorkflowRepository.findById(claimId).orElse(null);
         if (workflow != null) {
-            InternalDecisionValidator.validate(request, workflow.getClaimedAmount());
+            InternalDecisionValidator.validateApprovedAmountWithinClaim(
+                    request, workflow.getClaimedAmount(), action);
         }
-        ApprovalDecision action = InternalDecisionValidator.parseAction(request.action());
         return transactionTemplate.execute(status -> decide(
                 claimId,
                 action,
@@ -136,11 +141,7 @@ public class ApprovalService {
             if (!claimWorkflowRepository.existsById(claimId)) {
                 return DecisionResult.NOT_FOUND;
             }
-            decisionConflictRecorder.recordHumanLostConflict(
-                    claimId,
-                    decidedBy.userId(),
-                    decidedBy.role(),
-                    action);
+            recordConflict(claimId, decidedBy.userId(), decidedBy.role(), action);
             return DecisionResult.CONFLICT;
         }
 
@@ -206,6 +207,19 @@ public class ApprovalService {
                 approval.getDecision().name(),
                 approval.getApprovedAmount(),
                 new DecidedBy(approval.getDecidedByUserId(), approval.getDecidedByRole()));
+    }
+
+    private void recordConflict(
+            UUID claimId, String actorUserId, String actorRole, ApprovalDecision attemptedDecision) {
+        decisionAuditRepository.save(new DecisionAudit(
+                UUID.randomUUID(),
+                claimId,
+                actorUserId,
+                actorRole,
+                attemptedDecision.name(),
+                OUTCOME_CONFLICT,
+                REASON_CLAIM_ALREADY_DECIDED,
+                Instant.now()));
     }
 
     private void appendOutbox(UUID eventId, UUID aggregateId, String topic, Object payload) {

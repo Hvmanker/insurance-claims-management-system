@@ -12,18 +12,7 @@ public final class InternalDecisionValidator {
     private InternalDecisionValidator() {
     }
 
-    public static ApprovalDecision parseAction(String action) {
-        if (action == null) {
-            throw new InvalidDecisionRequestException();
-        }
-        try {
-            return ApprovalDecision.valueOf(action);
-        } catch (IllegalArgumentException exception) {
-            throw new InvalidDecisionRequestException();
-        }
-    }
-
-    public static void validate(InternalDecisionRequest request, BigDecimal claimedAmount) {
+    public static ApprovalDecision validate(InternalDecisionRequest request) {
         if (request == null || request.decidedBy() == null) {
             throw new InvalidDecisionRequestException();
         }
@@ -43,10 +32,10 @@ public final class InternalDecisionValidator {
             if (approvedAmount != null) {
                 throw new InvalidDecisionRequestException();
             }
-            return;
+            return action;
         }
         if (approvedAmount == null) {
-            return;
+            return action;
         }
         if (approvedAmount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new InvalidDecisionRequestException();
@@ -54,7 +43,30 @@ public final class InternalDecisionValidator {
         if (approvedAmount.scale() > 2) {
             throw new InvalidDecisionRequestException();
         }
+        return action;
+    }
+
+    public static void validateApprovedAmountWithinClaim(
+            InternalDecisionRequest request, BigDecimal claimedAmount, ApprovalDecision action) {
+        if (action != ApprovalDecision.APPROVED) {
+            return;
+        }
+        BigDecimal approvedAmount = request.approvedAmount();
+        if (approvedAmount == null) {
+            return;
+        }
         if (approvedAmount.compareTo(claimedAmount) > 0) {
+            throw new InvalidDecisionRequestException();
+        }
+    }
+
+    static ApprovalDecision parseAction(String action) {
+        if (action == null) {
+            throw new InvalidDecisionRequestException();
+        }
+        try {
+            return ApprovalDecision.valueOf(action);
+        } catch (IllegalArgumentException exception) {
             throw new InvalidDecisionRequestException();
         }
     }
