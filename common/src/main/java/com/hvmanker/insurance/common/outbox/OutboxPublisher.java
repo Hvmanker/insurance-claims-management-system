@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 
 /**
  * Polls unsent outbox rows and publishes them to Kafka. The message key is {@code aggregate_id}
@@ -34,14 +35,24 @@ public class OutboxPublisher {
     private final JdbcTemplate jdbcTemplate;
     private final OutboxMessageSender messageSender;
     private final long advisoryLockKey;
+    private final Consumer<Boolean> advisoryLockObserver;
 
     public OutboxPublisher(
             JdbcTemplate jdbcTemplate,
             OutboxMessageSender messageSender,
             long advisoryLockKey) {
+        this(jdbcTemplate, messageSender, advisoryLockKey, null);
+    }
+
+    public OutboxPublisher(
+            JdbcTemplate jdbcTemplate,
+            OutboxMessageSender messageSender,
+            long advisoryLockKey,
+            Consumer<Boolean> advisoryLockObserver) {
         this.jdbcTemplate = jdbcTemplate;
         this.messageSender = messageSender;
         this.advisoryLockKey = advisoryLockKey;
+        this.advisoryLockObserver = advisoryLockObserver;
     }
 
     public OutboxPublisher(
@@ -49,7 +60,7 @@ public class OutboxPublisher {
             KafkaTemplate<String, String> kafkaTemplate,
             long advisoryLockKey,
             Duration sendTimeout) {
-        this(jdbcTemplate, OutboxMessageSender.kafka(kafkaTemplate, sendTimeout), advisoryLockKey);
+        this(jdbcTemplate, OutboxMessageSender.kafka(kafkaTemplate, sendTimeout), advisoryLockKey, null);
     }
 
     @Scheduled(fixedDelayString = "${insurance.outbox.poll-interval-ms:1000}")
@@ -59,7 +70,11 @@ public class OutboxPublisher {
                 "SELECT pg_try_advisory_xact_lock(?)",
                 Boolean.class,
                 advisoryLockKey);
-        if (!Boolean.TRUE.equals(locked)) {
+        boolean acquired = Boolean.TRUE.equals(locked);
+        if (advisoryLockObserver != null) {
+            advisoryLockObserver.accept(acquired);
+        }
+        if (!acquired) {
             return;
         }
 

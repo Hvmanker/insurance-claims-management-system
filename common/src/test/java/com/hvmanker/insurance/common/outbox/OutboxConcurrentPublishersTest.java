@@ -15,15 +15,20 @@ import java.util.UUID;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 import static com.hvmanker.insurance.common.outbox.SyntheticIds.AGGREGATE_A;
 import static com.hvmanker.insurance.common.outbox.SyntheticIds.eventId;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OutboxConcurrentPublishersTest {
 
@@ -66,14 +71,42 @@ class OutboxConcurrentPublishersTest {
         TransactionTemplate txOne = new TransactionTemplate(new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSourceOne));
         TransactionTemplate txTwo = new TransactionTemplate(new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSourceTwo));
 
+        CountDownLatch releaseWhileLockHeld = new CountDownLatch(1);
+        AtomicBoolean releaseTriggered = new AtomicBoolean();
+        List<Boolean> publisherOneLockOutcomes = new CopyOnWriteArrayList<>();
+        List<Boolean> publisherTwoLockOutcomes = new CopyOnWriteArrayList<>();
+
+        Consumer<Boolean> releaseOnContention = acquired -> {
+            if (!acquired && releaseTriggered.compareAndSet(false, true)) {
+                releaseWhileLockHeld.countDown();
+            }
+        };
+
+        OutboxMessageSender kafkaSender = OutboxMessageSender.kafka(kafkaTemplate, Duration.ofSeconds(30));
+        OutboxMessageSender slowSender = record -> {
+            if (!releaseWhileLockHeld.await(15, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("timed out waiting for advisory lock contention");
+            }
+            Thread.sleep(5);
+            kafkaSender.send(record);
+        };
+
         OutboxPublisher publisherOne = new OutboxPublisher(
                 jdbcOne,
-                OutboxMessageSender.kafka(kafkaTemplate, Duration.ofSeconds(30)),
-                OutboxInboxTestSupport.DEFAULT_ADVISORY_LOCK_KEY);
+                slowSender,
+                OutboxInboxTestSupport.DEFAULT_ADVISORY_LOCK_KEY,
+                acquired -> {
+                    publisherOneLockOutcomes.add(acquired);
+                    releaseOnContention.accept(acquired);
+                });
         OutboxPublisher publisherTwo = new OutboxPublisher(
                 jdbcTwo,
-                OutboxMessageSender.kafka(kafkaTemplate, Duration.ofSeconds(30)),
-                OutboxInboxTestSupport.DEFAULT_ADVISORY_LOCK_KEY);
+                slowSender,
+                OutboxInboxTestSupport.DEFAULT_ADVISORY_LOCK_KEY,
+                acquired -> {
+                    publisherTwoLockOutcomes.add(acquired);
+                    releaseOnContention.accept(acquired);
+                });
 
         ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
         executor.scheduleAtFixedRate(
@@ -104,5 +137,17 @@ class OutboxConcurrentPublishersTest {
         }
 
         assertEquals(50, jdbcTemplate.queryForObject("SELECT count(*) FROM outbox WHERE sent_at IS NOT NULL", Integer.class));
+
+        assertLockOutcomeMix(publisherOneLockOutcomes);
+        assertLockOutcomeMix(publisherTwoLockOutcomes);
+    }
+
+    private static void assertLockOutcomeMix(List<Boolean> lockOutcomes) {
+        assertTrue(
+                lockOutcomes.stream().anyMatch(Boolean::booleanValue),
+                () -> "expected at least one advisory lock acquired cycle, saw " + lockOutcomes);
+        assertTrue(
+                lockOutcomes.stream().anyMatch(acquired -> !acquired),
+                () -> "expected at least one advisory lock contention cycle, saw " + lockOutcomes);
     }
 }
