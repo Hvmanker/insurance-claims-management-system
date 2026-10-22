@@ -34,7 +34,7 @@ public class AnalysisListener {
         ClaimAnalysisCompletedEvent event = record.value();
         UUID eventId = resolveEventId(record);
         try (EventMdc ignored = EventMdc.open(event.claimId(), eventId)) {
-            approvalService.handleAnalysisCompleted(event, eventId);
+            approvalService.handleAnalysisCompleted(event);
         }
     }
 

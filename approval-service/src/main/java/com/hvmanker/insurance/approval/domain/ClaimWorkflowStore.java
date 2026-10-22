@@ -51,16 +51,4 @@ public class ClaimWorkflowStore {
                 newStatus,
                 claimId);
     }
-
-    public int transitionFromAnalysisPending(UUID claimId, String newStatus) {
-        return jdbcTemplate.update(
-                """
-                UPDATE claim_workflow
-                SET status = ?, updated_at = now()
-                WHERE claim_id = ?
-                  AND status = 'ANALYSIS_PENDING'
-                """,
-                newStatus,
-                claimId);
-    }
 }

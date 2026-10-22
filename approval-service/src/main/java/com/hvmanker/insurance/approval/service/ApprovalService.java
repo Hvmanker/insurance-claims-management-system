@@ -105,7 +105,9 @@ public class ApprovalService {
         appendOutbox(outboxEventId, event.claimId(), CLAIM_ANALYSIS_REQUESTED, analysisRequested);
     }
 
-    public void handleAnalysisCompleted(ClaimAnalysisCompletedEvent event, UUID eventId) {
+    @Transactional
+    public void handleAnalysisCompleted(ClaimAnalysisCompletedEvent event) {
+        UUID eventId = event.eventId();
         if (!inboxGuard.firstTime(ANALYSIS_COMPLETED_CONSUMER_GROUP, eventId)) {
             EventMdc.logDuplicateSkipped(log, event.claimId(), eventId);
             return;
@@ -113,16 +115,13 @@ public class ApprovalService {
 
         ClaimWorkflow workflow = claimWorkflowRepository.findById(event.claimId()).orElse(null);
         if (workflow == null) {
+            log.warn("analysis.completed for missing workflow claimId={} eventId={}", event.claimId(), eventId);
             return;
         }
 
         boolean autoEligible = workflow.getClaimedAmount().compareTo(autoApprovalLimit) <= 0
                 && event.flags().isEmpty();
         if (autoEligible) {
-<<<<<<< HEAD
-=======
-            decisionRaceHook.beforeConditionalUpdate(ApprovalSource.AUTO);
->>>>>>> 5e80626 (fix(1A.4): analysis workflow transitions after store simplifier trim)
             int updated = claimWorkflowStore.transitionFromAnalysisPending(
                     event.claimId(),
                     WorkflowStatus.APPROVED);
