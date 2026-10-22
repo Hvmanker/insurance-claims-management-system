@@ -568,4 +568,162 @@ if ! grep -q 'claims tarball sha256: UNKNOWN' <<<"$empty_log"; then
   exit 1
 fi
 
+echo "stub: CHECK_06_CLAIM_AMOUNT is 15000.00"
+if [[ "${CHECK_06_CLAIM_AMOUNT}" != "15000.00" ]]; then
+  echo "FAIL: CHECK_06_CLAIM_AMOUNT=${CHECK_06_CLAIM_AMOUNT}, expected 15000.00" >&2
+  exit 1
+fi
+
+phase0_kafka_topics_list_sorted() {
+  printf '%s\n' "${PHASE0_STUB_KAFKA_LIST[@]:-}" | LC_ALL=C sort
+}
+
+phase0_kafka_configs_sh() {
+  printf '%s\n' "${PHASE0_STUB_KAFKA_CONFIGS_OUTPUT:-}"
+  return 0
+}
+
+claim_service_compose_logs() {
+  printf '%s\n' "${PHASE0_STUB_CLAIM_SERVICE_LOGS:-}"
+}
+
+phase0_stub_compose_ps_kafka_init() {
+  printf '%s\n' "${PHASE0_STUB_KAFKA_INIT_STATE:-exited}"
+  printf '%s\n' "${PHASE0_STUB_KAFKA_INIT_EXIT:-0}"
+}
+
+compose() {
+  if [[ "${1:-}" == "ps" && "${2:-}" == "-a" && "${3:-}" == "kafka-init" ]]; then
+    if [[ "${4:-}" == "--format" && "${5:-}" == "{{.State}}" ]]; then
+      phase0_stub_compose_ps_kafka_init | head -n1
+      return 0
+    fi
+    if [[ "${4:-}" == "--format" && "${5:-}" == "{{.ExitCode}}" ]]; then
+      phase0_stub_compose_ps_kafka_init | tail -n1
+      return 0
+    fi
+  fi
+  command docker compose "$@"
+}
+
+echo "stub: kafka topic pre-create check passes with matching topic list and broker config"
+PHASE0_STUB_KAFKA_LIST=(
+  claim.analysis.completed
+  claim.analysis.requested
+  claim.approved
+  claim.approved.DLT
+  claim.manual-decision
+  claim.rejected
+  claim.settled
+  claim.submitted
+)
+PHASE0_STUB_KAFKA_CONFIGS_OUTPUT='auto.create.topics.enable=false	'
+PHASE0_STUB_KAFKA_INIT_STATE=exited
+PHASE0_STUB_KAFKA_INIT_EXIT=0
+PHASE0_STUB_CLAIM_SERVICE_LOGS='claim-service started'
+stub_pass_before="$PASS_COUNT"
+stub_fail_before="$FAIL_COUNT"
+check_17_kafka_topics_precreated "17" "stub kafka topics" || true
+if [[ "$PASS_COUNT" -ne $((stub_pass_before + 1)) || "$FAIL_COUNT" -ne "$stub_fail_before" ]]; then
+  echo "FAIL: expected check 17 PASS in stub (pass=${PASS_COUNT} fail=${FAIL_COUNT})" >&2
+  exit 1
+fi
+PASS_COUNT="$stub_pass_before"
+FAIL_COUNT="$stub_fail_before"
+
+echo "stub: kafka topic pre-create check fails on topic mismatch"
+PHASE0_STUB_KAFKA_LIST=(claim.submitted)
+stub_pass_before="$PASS_COUNT"
+stub_fail_before="$FAIL_COUNT"
+check_17_kafka_topics_precreated "17" "stub kafka topics mismatch" || true
+if [[ "$FAIL_COUNT" -ne $((stub_fail_before + 1)) || "$PASS_COUNT" -ne "$stub_pass_before" ]]; then
+  echo "FAIL: topic mismatch should increment FAIL_COUNT only" >&2
+  exit 1
+fi
+PASS_COUNT="$stub_pass_before"
+FAIL_COUNT="$stub_fail_before"
+
+echo "stub: kafka topic pre-create check fails when claim-service logs partition warning"
+PHASE0_STUB_KAFKA_LIST=(
+  claim.analysis.completed
+  claim.analysis.requested
+  claim.approved
+  claim.approved.DLT
+  claim.manual-decision
+  claim.rejected
+  claim.settled
+  claim.submitted
+)
+PHASE0_STUB_CLAIM_SERVICE_LOGS='exists but has a different partition count: 1 not 3'
+stub_pass_before="$PASS_COUNT"
+stub_fail_before="$FAIL_COUNT"
+check_17_kafka_topics_precreated "17" "stub partition warning" || true
+if [[ "$FAIL_COUNT" -ne $((stub_fail_before + 1)) ]]; then
+  echo "FAIL: partition-count log line should fail check 17" >&2
+  exit 1
+fi
+PASS_COUNT="$stub_pass_before"
+FAIL_COUNT="$stub_fail_before"
+PHASE0_STUB_CLAIM_SERVICE_LOGS=''
+
+phase0_burst_wait_next_state() {
+  local jar="$1" claim_id="$2" start_epoch="$3" index="$4"
+  if [[ -n "${PHASE0_STUB_BURST_LATE_INDEX:-}" && "$index" == "${PHASE0_STUB_BURST_LATE_INDEX}" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+register_insured() {
+  return 0
+}
+
+phase0_burst_submit_claim() {
+  local jar="$1" index="$2"
+  printf '{"id":"burst-claim-%02d"}' "$index" >"${PHASE0_CURL_BODY}"
+  return 0
+}
+
+claim_id_from_submit() {
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "${PHASE0_CURL_BODY}" 2>/dev/null
+}
+
+claim_status() {
+  printf '%s' "APPROVED"
+}
+
+phase0_kafka_claim_submitted_partition() {
+  local claim_id="$1"
+  if [[ "$claim_id" =~ -([0-9]+)$ ]]; then
+    printf '%s' "$(( (10#${BASH_REMATCH[1]} - 1) % 3 ))"
+  else
+    printf '0'
+  fi
+}
+
+echo "stub: startup burst check passes when all claims reach next state in time"
+unset PHASE0_STUB_BURST_LATE_INDEX
+stub_pass_before="$PASS_COUNT"
+stub_fail_before="$FAIL_COUNT"
+check_16_startup_kafka_burst "16" "stub burst pass" || true
+if [[ "$PASS_COUNT" -ne $((stub_pass_before + 1)) ]]; then
+  echo "FAIL: burst pass should increment PASS_COUNT" >&2
+  exit 1
+fi
+PASS_COUNT="$stub_pass_before"
+FAIL_COUNT="$stub_fail_before"
+
+echo "stub: startup burst check fails when one claim is late at 60s"
+export PHASE0_STUB_BURST_LATE_INDEX=3
+stub_pass_before="$PASS_COUNT"
+stub_fail_before="$FAIL_COUNT"
+check_16_startup_kafka_burst "16" "stub burst late" || true
+if [[ "$FAIL_COUNT" -ne $((stub_fail_before + 1)) ]]; then
+  echo "FAIL: late burst claim should increment FAIL_COUNT" >&2
+  exit 1
+fi
+PASS_COUNT="$stub_pass_before"
+FAIL_COUNT="$stub_fail_before"
+unset PHASE0_STUB_BURST_LATE_INDEX
+
 echo "stub: all OK"
