@@ -119,6 +119,10 @@ public class ApprovalService {
         boolean autoEligible = workflow.getClaimedAmount().compareTo(autoApprovalLimit) <= 0
                 && event.flags().isEmpty();
         if (autoEligible) {
+<<<<<<< HEAD
+=======
+            decisionRaceHook.beforeConditionalUpdate(ApprovalSource.AUTO);
+>>>>>>> 5e80626 (fix(1A.4): analysis workflow transitions after store simplifier trim)
             int updated = claimWorkflowStore.transitionFromAnalysisPending(
                     event.claimId(),
                     WorkflowStatus.APPROVED);

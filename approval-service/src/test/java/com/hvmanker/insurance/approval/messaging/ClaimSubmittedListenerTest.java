@@ -9,13 +9,8 @@ import com.hvmanker.insurance.approval.domain.ClaimApprovalRepository;
 import com.hvmanker.insurance.approval.domain.ClaimWorkflowRepository;
 import com.hvmanker.insurance.approval.domain.ClaimWorkflowStore;
 import com.hvmanker.insurance.approval.domain.WorkflowStatus;
-import com.hvmanker.insurance.approval.service.ApprovalService;
-<<<<<<< HEAD
 import com.hvmanker.insurance.approval.domain.DecisionAuditRepository;
-=======
-import com.hvmanker.insurance.approval.service.DecisionConflictRecorder;
-import com.hvmanker.insurance.approval.service.DecisionRaceHook;
->>>>>>> 54039f7 (test(1A.4): update unit tests for ApprovalService constructor)
+import com.hvmanker.insurance.approval.service.ApprovalService;
 import com.hvmanker.insurance.common.events.ClaimSubmittedEvent;
 import com.hvmanker.insurance.common.inbox.InboxGuard;
 import com.hvmanker.insurance.common.outbox.OutboxWriter;
