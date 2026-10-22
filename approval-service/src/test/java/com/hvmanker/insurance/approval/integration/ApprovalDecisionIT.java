@@ -1,5 +1,6 @@
-package com.hvmanker.insurance.approval;
+package com.hvmanker.insurance.approval.integration;
 
+import com.hvmanker.insurance.approval.ApprovalServiceApplication;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
