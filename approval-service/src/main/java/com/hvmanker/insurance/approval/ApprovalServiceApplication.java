@@ -9,4 +9,3 @@ public class ApprovalServiceApplication {
         SpringApplication.run(ApprovalServiceApplication.class, args);
     }
 }
-

@@ -36,10 +36,34 @@ public class ClaimApproval {
     @Column(nullable = false)
     private Instant decidedAt;
 
+    @Column(unique = true)
+    private UUID decisionId;
+
+    @Column(length = 128)
+    private String decidedByUserId;
+
+    @Column(length = 32)
+    private String decidedByRole;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 16)
+    private ApprovalSource source;
+
     protected ClaimApproval() {
     }
 
-    public ClaimApproval(UUID claimId, String policyNumber, BigDecimal requestedAmount, BigDecimal approvedAmount, ApprovalDecision decision, String reason, Instant decidedAt) {
+    public ClaimApproval(
+            UUID claimId,
+            String policyNumber,
+            BigDecimal requestedAmount,
+            BigDecimal approvedAmount,
+            ApprovalDecision decision,
+            String reason,
+            Instant decidedAt,
+            UUID decisionId,
+            String decidedByUserId,
+            String decidedByRole,
+            ApprovalSource source) {
         this.claimId = claimId;
         this.policyNumber = policyNumber;
         this.requestedAmount = requestedAmount;
@@ -47,10 +71,41 @@ public class ClaimApproval {
         this.decision = decision;
         this.reason = reason;
         this.decidedAt = decidedAt;
+        this.decisionId = decisionId;
+        this.decidedByUserId = decidedByUserId;
+        this.decidedByRole = decidedByRole;
+        this.source = source;
     }
 
-    public BigDecimal getApprovedAmount() { return approvedAmount; }
-    public ApprovalDecision getDecision() { return decision; }
-    public String getReason() { return reason; }
-    public Instant getDecidedAt() { return decidedAt; }
+    public UUID getClaimId() {
+        return claimId;
+    }
+
+    public BigDecimal getApprovedAmount() {
+        return approvedAmount;
+    }
+
+    public ApprovalDecision getDecision() {
+        return decision;
+    }
+
+    public String getReason() {
+        return reason;
+    }
+
+    public Instant getDecidedAt() {
+        return decidedAt;
+    }
+
+    public UUID getDecisionId() {
+        return decisionId;
+    }
+
+    public String getDecidedByUserId() {
+        return decidedByUserId;
+    }
+
+    public String getDecidedByRole() {
+        return decidedByRole;
+    }
 }

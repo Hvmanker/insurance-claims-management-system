@@ -16,31 +16,12 @@ readonly BASE_URL="${PHASE0_BASE_URL:-http://localhost:8081}"
 readonly DEMO_SEEDER_LOG_MARKER='Demo portal user ready:'
 declare -a DEMO_PASSWORD_ENV_NAMES=()
 
-# Ordered gate checks (reorder to match Verifier list).
-# Format: NN|display name|handler|stub_skip_reason
-# Use handler "." with stub_skip_reason for checks run inline in run_all_checks (08–11, 14–15).
+# Phase 0 gate: exactly three checks on one fresh demo-profile stack (P1 → P2 → P3).
+# Format: id|display name|handler
 CHECKS=(
-  '01|Every service is healthy after `up`, and `docker compose ps` shows 8081 as the only published port.|check_01_healthy_and_single_published_port'
-  '02|From the host, 5432, 6379, 9092, 8082, 8083 and 8084 aren'\''t reachable, and 8081 is. Make the main test `docker compose -p phase0check port <service> <port>`, which must return empty for every service except claim-service:8081. Use `nc -z` only as a secondary check. If a host port is occupied by something OUTSIDE the stack (the compose port check is empty but nc succeeds), report SKIPPED with the port named, not FAIL.|check_02_host_port_exposure'
-  '03|`redis-cli ping` without a password returns NOAUTH (run it inside the redis container).|check_03_redis_noauth_without_password'
-  '04|After a cold start, Flyway migrates Postgres, and portal_users stays empty without the demo profile.|check_04_flyway_and_empty_portal_without_demo'
-  '05|After `down -v && up` with the demo profile on, the demo password from the env file signs in.|check_05_demo_sign_in_after_fresh_volume'
-  '06|With the real Redis cache (password on), INSURED B and BROKER get 404 after AGENT warms the cache, and `decide` evicts the entry. Do this live via curl.|check_06_live_cache_authorization_tm_a'
-  '07|TM-B, the notification log-leak test, passes against a real Kafka consumer. If there'\''s no such integration test, report SKIPPED with the reason. Never count a unit-only run as a PASS here.|check_07_tm_b_kafka_integration'
-  '08|A claim.decided that is delivered late, arriving before claim.submitted, is handled correctly.|.|consumers not yet on the contract envelope (1A)'
-  '09|A duplicate eventId doesn'\''t cause a second payout.|.|consumers not yet on the contract envelope (1A)'
-  '10|The 5200.00 vs 5180.00 amount mismatch is flagged in reconciliation.|.|consumers not yet on the contract envelope (1A)'
-  '11|A read between `decide` and its commit doesn'\''t put the stale status back into the cache. Without a test hook that pauses between decide and the commit, always report SKIPPED with that reason. No timing-based PASS.|.|no hook to pause between decide and its commit'
-  '12|The README URL works from a clean clone.|check_12_readme_dashboard_url|'
-  '13|TM-D: a claim over 10k stays SUBMITTED and the legacy AGENT decides it, run on the live stack.|check_13_tm_d_high_value_manual_decide|'
-  # Checks 14–15: never PASS on the default `down -v` then `up` path — empty Kafka/Redis is
-  # guaranteed and would be a false green. A real upgrade test must: (1) start a pre-rename
-  # image stack, warm Redis with a cached claim entry, and publish at least one legacy
-  # com.sunil-typed Kafka event; (2) run the documented topic reset / Redis claims flush;
-  # (3) deploy new images and verify they start, serve a claim read, and consume new events
-  # without deserialization errors.
-  '14|no stale com.sunil-typed messages on Kafka topics after rename (topics emptied/recreated)|.|upgrade path not exercised'
-  '15|Redis claims cache flushed on deploy after rename|.|upgrade path not exercised'
+  'P1|Startup burst: 12 claims at 1000.00 reach APPROVED or SETTLED within 60s of each submit|check_P1_startup_burst'
+  'P2|Stack healthy, locked down, Flyway on claim-service, and Kafka topics pre-created|check_P2_stack_healthy_locked_topics'
+  'P3|Demo login, 15000.00 over-10k limit, Redis cache isolation, and AGENT decide|check_P3_login_cache_high_value'
 )
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -56,6 +37,7 @@ PHASE0_CURL_BODY=""
 PHASE0_LAST_HTTP_CODE=""
 PHASE0_REGISTER_HTTP_CODE=""
 COMPOSE_PS_STATUS_REPORT=""
+PHASE0_KAFKA_INIT_FAIL_REASON=""
 HTTP_WAIT_STATUS_REPORT=""
 PHASE0_ACTIVE_COMPOSE_PROJECT=""
 declare -a PHASE0_STOPPED_PROJECTS=()
@@ -63,8 +45,6 @@ declare -a PHASE0_USED_PROJECTS=()
 declare -a PHASE0_CREATED_PROJECTS=()
 PHASE0_COMPOSE_RUN_TS=""
 PHASE0_PROJECT_STARTUP=""
-PHASE0_PROJECT_C04=""
-PHASE0_PROJECT_C05=""
 PHASE0_RESOLVED_COMPOSE_BIN=""
 phase0_compose_use_standalone=0
 
@@ -256,12 +236,8 @@ phase0_init_and_validate_no_teardown_projects() {
   fi
   PHASE0_COMPOSE_RUN_TS="$(date -u +%Y%m%dt%H%M%Sz)"
   PHASE0_PROJECT_STARTUP="$(phase0_compose_project_for_phase startup)"
-  PHASE0_PROJECT_C04="$(phase0_compose_project_for_phase c04)"
-  PHASE0_PROJECT_C05="$(phase0_compose_project_for_phase c05)"
-  for n in "${PHASE0_PROJECT_STARTUP}" "${PHASE0_PROJECT_C04}" "${PHASE0_PROJECT_C05}"; do
-    phase0_assert_compose_project_accepted_by_cli "$n"
-  done
-  log_line "PHASE0_NO_TEARDOWN: validated compose projects (ts=${PHASE0_COMPOSE_RUN_TS}) startup=${PHASE0_PROJECT_STARTUP} c04=${PHASE0_PROJECT_C04} c05=${PHASE0_PROJECT_C05}"
+  phase0_assert_compose_project_accepted_by_cli "${PHASE0_PROJECT_STARTUP}"
+  log_line "PHASE0_NO_TEARDOWN: validated compose project (ts=${PHASE0_COMPOSE_RUN_TS}) startup=${PHASE0_PROJECT_STARTUP}"
 }
 
 phase0_register_tmp() {
@@ -481,24 +457,6 @@ phase0_switch_compose_project() {
   log_line "compose project active: ${PHASE0_ACTIVE_COMPOSE_PROJECT}"
 }
 
-phase0_prepare_fresh_compose_stack() {
-  local phase="$1" target=""
-  if phase0_no_teardown_enabled; then
-    case "$phase" in
-      c04) target="${PHASE0_PROJECT_C04}" ;;
-      c05) target="${PHASE0_PROJECT_C05}" ;;
-      *)
-        printf 'unknown no-teardown compose phase %q\n' "$phase" >&2
-        exit 2
-        ;;
-    esac
-    phase0_switch_compose_project "$target"
-    phase0_log_phase_compose_header "$phase"
-  else
-    compose down -v >/dev/null 2>&1 || true
-  fi
-}
-
 phase0_log_no_teardown_closing_note() {
   local f p vol last="${PHASE0_ACTIVE_COMPOSE_PROJECT}"
   log_line "PHASE0_NO_TEARDOWN closing note:"
@@ -537,18 +495,76 @@ compose_port_is_published() {
   [[ -n "$mapping" ]] && [[ "$mapping" != *:0 ]]
 }
 
+phase0_stamp_field() {
+  local key="$1" stamp_file="${REPO_ROOT}/STAMP.txt" line="" value="" alt_key=""
+  [[ "$key" == "commit" ]] && alt_key="tip"
+  if [[ -f "$stamp_file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ "$line" =~ ^[[:space:]]*${key}[[:space:]]*=[[:space:]]*(.+)$ ]] && value="${BASH_REMATCH[1]}"
+      [[ "$line" =~ ^[[:space:]]*${key}[[:space:]]+(.+)$ ]] && value="${BASH_REMATCH[1]}"
+      if [[ -n "$alt_key" ]]; then
+        [[ "$line" =~ ^[[:space:]]*${alt_key}[[:space:]]*=[[:space:]]*(.+)$ ]] && value="${BASH_REMATCH[1]}"
+        [[ "$line" =~ ^[[:space:]]*${alt_key}[[:space:]]+(.+)$ ]] && value="${BASH_REMATCH[1]}"
+      fi
+    done < "$stamp_file"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ -n "$value" ]]; then
+      printf '%s' "$value"
+    fi
+  fi
+  return 0
+}
+
 log_repo_git_state() {
-  local head porcelain
-  head="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
-  porcelain="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null || true)"
-  log_line "git rev-parse HEAD: ${head}"
-  log_line "git status --porcelain"
-  if [[ -z "$porcelain" ]]; then
-    log_line "(clean)"
+  local head tree tarball_sha256 porcelain stamp_commit stamp_tree stamp_tarball
+  if [[ -d "${REPO_ROOT}/.git" ]]; then
+    head="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+    tree="$(git -C "$REPO_ROOT" rev-parse 'HEAD^{tree}' 2>/dev/null || echo unknown)"
+    log_line "git rev-parse HEAD: ${head}"
+    log_line "git rev-parse HEAD^{tree}: ${tree}"
+    porcelain="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null || true)"
+    log_line "git status --porcelain"
+    if [[ -z "$porcelain" ]]; then
+      log_line "(clean)"
+    else
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && log_line "$line"
+      done <<< "$porcelain"
+    fi
+    return
+  fi
+
+  head="${CLAIMS_COMMIT:-}"
+  tree="${CLAIMS_TREE:-}"
+  tarball_sha256="${CLAIMS_TARBALL_SHA256:-}"
+  stamp_commit="$(phase0_stamp_field commit)"
+  stamp_tree="$(phase0_stamp_field tree)"
+  stamp_tarball="$(phase0_stamp_field tarball_sha256)"
+  if [[ -z "$head" && -n "$stamp_commit" ]]; then
+    head="$stamp_commit"
+  fi
+  if [[ -z "$tree" && -n "$stamp_tree" ]]; then
+    tree="$stamp_tree"
+  fi
+  if [[ -z "$tarball_sha256" && -n "$stamp_tarball" ]]; then
+    tarball_sha256="$stamp_tarball"
+  fi
+
+  if [[ -n "$head" ]]; then
+    log_line "claims commit: ${head}"
   else
-    while IFS= read -r line; do
-      [[ -n "$line" ]] && log_line "$line"
-    done <<< "$porcelain"
+    log_line "claims commit: UNKNOWN (no .git, CLAIMS_COMMIT, or STAMP.txt commit)"
+  fi
+  if [[ -n "$tree" ]]; then
+    log_line "claims tree: ${tree}"
+  else
+    log_line "claims tree: UNKNOWN (no .git, CLAIMS_TREE, or STAMP.txt tree)"
+  fi
+  if [[ -n "$tarball_sha256" ]]; then
+    log_line "claims tarball sha256: ${tarball_sha256}"
+  else
+    log_line "claims tarball sha256: UNKNOWN (no CLAIMS_TARBALL_SHA256 or STAMP.txt tarball_sha256)"
   fi
 }
 
@@ -557,14 +573,30 @@ redis_scan_claims_keys() {
     redis-cli --scan --pattern 'claims*' 2>/dev/null || true
 }
 
+redis_claim_cache_key_for_id() {
+  printf 'claims::%s' "$1"
+}
+
 redis_scan_contains_claim_id() {
-  local claim_id="$1" scan_out
+  local claim_id="$1" expected_key scan_out
+  expected_key="$(redis_claim_cache_key_for_id "$claim_id")"
   scan_out="$(redis_scan_claims_keys)"
-  grep -qF "$claim_id" <<< "$scan_out" 2>/dev/null
+  grep -qxF "$expected_key" <<< "$scan_out" 2>/dev/null
 }
 
 log_check_06_redis_scan() {
-  local phase="$1" scan_out line logged=0
+  local phase="$1" claim_id="${2:-}" expected_key scan_out
+  if [[ -n "$claim_id" ]]; then
+    expected_key="$(redis_claim_cache_key_for_id "$claim_id")"
+    scan_out="$(redis_scan_claims_keys)"
+    if grep -qxF "$expected_key" <<<"$scan_out" 2>/dev/null; then
+      log_line "[06] redis-scan ${phase}: ${expected_key} present"
+    else
+      log_line "[06] redis-scan ${phase}: ${expected_key} absent"
+    fi
+    return
+  fi
+  local line logged=0
   scan_out="$(redis_scan_claims_keys)"
   if [[ -z "${scan_out//[$'\n\r\t ']}" ]]; then
     log_line "[06] redis-scan ${phase}: (none)"
@@ -585,6 +617,97 @@ compose_ps_lines() {
   compose ps -a --format '{{.Service}}\t{{.State}}\t{{.Health}}' 2>/dev/null || true
 }
 
+# Services with restart: "no" in docker-compose.yml (e.g. kafka-init) may exit 0 once and stay exited.
+phase0_compose_oneshot_service_names() {
+  awk '
+    /^  [a-z0-9][a-z0-9_-]*:$/ {
+      if (svc != "" && restart_no) {
+        print svc
+      }
+      svc = $0
+      sub(/^  /, "", svc)
+      sub(/:$/, "", svc)
+      restart_no = 0
+      next
+    }
+    svc != "" && /^    restart: "no"/ {
+      restart_no = 1
+      next
+    }
+    /^  [a-z0-9]/ && !/^    / {
+      if (svc != "" && restart_no) {
+        print svc
+      }
+      svc = ""
+      restart_no = 0
+    }
+    END {
+      if (svc != "" && restart_no) {
+        print svc
+      }
+    }
+  ' "${REPO_ROOT}/docker-compose.yml"
+}
+
+phase0_compose_service_exit_code() {
+  local svc="$1"
+  compose ps -a "$svc" --format '{{.ExitCode}}' 2>/dev/null | head -n1 || true
+}
+
+phase0_is_oneshot_service() {
+  local svc="$1" oneshot
+  while IFS= read -r oneshot; do
+    [[ -z "$oneshot" ]] && continue
+    if [[ "$svc" == "$oneshot" ]]; then
+      return 0
+    fi
+  done <<< "$(phase0_compose_oneshot_service_names)"
+  return 1
+}
+
+phase0_kafka_init_container_id() {
+  local svc cid
+  while IFS=$'\t' read -r svc cid; do
+    [[ -z "$svc" ]] && continue
+    if [[ "$svc" == "kafka-init" ]]; then
+      printf '%s' "$cid"
+      return 0
+    fi
+  done <<< "$(compose ps -a --format '{{.Service}}\t{{.ID}}' 2>/dev/null || true)"
+  return 1
+}
+
+phase0_docker_inspect_template() {
+  local container_id="$1" template="$2"
+  docker inspect -f "$template" "$container_id" 2>/dev/null || true
+}
+
+phase0_kafka_init_graded_ok() {
+  local container_id status exit_code
+  PHASE0_KAFKA_INIT_FAIL_REASON=""
+  container_id="$(phase0_kafka_init_container_id)" || container_id=""
+  if [[ -z "$container_id" ]]; then
+    PHASE0_KAFKA_INIT_FAIL_REASON="kafka-init container missing in compose project ${COMPOSE_PROJECT:-<unset>}"
+    return 1
+  fi
+  status="$(phase0_docker_inspect_template "$container_id" '{{.State.Status}}')"
+  exit_code="$(phase0_docker_inspect_template "$container_id" '{{.State.ExitCode}}')"
+  if [[ "$status" != "exited" ]]; then
+    PHASE0_KAFKA_INIT_FAIL_REASON="kafka-init docker inspect State.Status=${status:-<empty>}, expected exited"
+    return 1
+  fi
+  if [[ "$exit_code" != "0" ]]; then
+    PHASE0_KAFKA_INIT_FAIL_REASON="kafka-init docker inspect State.ExitCode=${exit_code:-<empty>}, expected 0"
+    return 1
+  fi
+  return 0
+}
+
+phase0_service_counts_as_healthy() {
+  local svc="$1" state="$2" health="$3"
+  [[ "$state" == "running" && "$health" == "healthy" ]]
+}
+
 compose_ps_status_report() {
   local svc state health
   local -a parts=()
@@ -596,12 +719,16 @@ compose_ps_status_report() {
   printf '%s' "${parts[*]+"${parts[*]}"}"
 }
 
+# Long-running services only (one-shot init jobs such as kafka-init are graded separately in P2).
 compose_all_services_running_healthy() {
   local svc state health saw_service=0
   while IFS=$'\t' read -r svc state health; do
     [[ -z "$svc" ]] && continue
+    if phase0_is_oneshot_service "$svc"; then
+      continue
+    fi
     saw_service=1
-    if [[ "$state" != "running" ]] || [[ "$health" != "healthy" ]]; then
+    if ! phase0_service_counts_as_healthy "$svc" "$state" "$health"; then
       return 1
     fi
   done <<< "$(compose_ps_lines)"
@@ -613,9 +740,13 @@ services_not_fully_healthy_list() {
   local -a parts=()
   while IFS=$'\t' read -r svc state health; do
     [[ -z "$svc" ]] && continue
-    if [[ "$state" != "running" ]] || [[ "$health" != "healthy" ]]; then
-      parts+=("${svc}(state=${state},health=${health:-empty})")
+    if phase0_is_oneshot_service "$svc"; then
+      continue
     fi
+    if phase0_service_counts_as_healthy "$svc" "$state" "$health"; then
+      continue
+    fi
+    parts+=("${svc}(state=${state},health=${health:-empty})")
   done <<< "$(compose_ps_lines)"
   local IFS=','
   printf '%s' "${parts[*]+"${parts[*]}"}"
@@ -627,6 +758,12 @@ unhealthy_services() {
   local -a parts=()
   while IFS=$'\t' read -r svc state health; do
     [[ -z "$svc" ]] && continue
+    if phase0_is_oneshot_service "$svc"; then
+      continue
+    fi
+    if phase0_service_counts_as_healthy "$svc" "$state" "$health"; then
+      continue
+    fi
     parts+=("${svc}(state=${state},health=${health:-empty})")
   done <<< "$(compose_ps_lines)"
   local IFS=','
@@ -835,7 +972,12 @@ register_insured() {
   [[ "$code" == "201" || "$code" == "200" ]]
 }
 
-readonly CHECK_06_CLAIM_AMOUNT="1500.00"
+readonly CHECK_06_CLAIM_AMOUNT="15000.00"
+readonly PHASE0_BURST_CLAIM_COUNT=12
+readonly PHASE0_BURST_CLAIM_AMOUNT="1000.00"
+readonly PHASE0_BURST_DEADLINE_SEC=60
+readonly PHASE0_KAFKA_TOPICS_FILE="${REPO_ROOT}/kafka/topics.txt"
+readonly PHASE0_KAFKA_BROKER_ID="${PHASE0_KAFKA_BROKER_ID:-1}"
 
 submit_claim() {
   local jar="$1" amount="$2"
@@ -870,16 +1012,105 @@ claim_id_from_submit() {
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "${PHASE0_CURL_BODY}" 2>/dev/null
 }
 
-has_tm_b_kafka_integration_test() {
-  local f
-  while IFS= read -r f; do
-    if [[ -f "$f" ]] && grep -qE '@EmbeddedKafka|Testcontainers|@SpringBootTest' "$f" 2>/dev/null; then
-      if grep -q 'WorkflowNotificationListener' "$f" 2>/dev/null; then
-        return 0
-      fi
+phase0_kafka_topics_sh() {
+  compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 "$@"
+}
+
+phase0_kafka_configs_sh() {
+  compose exec -T kafka /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092 "$@"
+}
+
+phase0_expected_kafka_topics_sorted() {
+  local topic
+  while IFS= read -r topic || [[ -n "$topic" ]]; do
+    [[ -z "$topic" ]] && continue
+    printf '%s\n' "$topic"
+  done < "${PHASE0_KAFKA_TOPICS_FILE}" | LC_ALL=C sort
+}
+
+phase0_kafka_topics_list_sorted() {
+  phase0_kafka_topics_sh --list 2>/dev/null | grep -vE '^__' | LC_ALL=C sort
+}
+
+phase0_burst_submit_claim() {
+  local jar="$1" index="$2"
+  local body code
+  body="$(printf '{"policyNumber":"POL-PHASE0-BURST-%02d","claimType":"AUTO","reason":"Phase0 startup burst","description":"Burst claim %02d","estimatedAmount":%s}' \
+    "$index" "$index" "${PHASE0_BURST_CLAIM_AMOUNT}")"
+  code="$(curl_json POST "${BASE_URL}/claims" "$jar" "$body")"
+  [[ "$code" == "201" ]]
+}
+
+phase0_burst_claim_reached_next_state() {
+  local status="$1"
+  [[ "$status" == "APPROVED" || "$status" == "SETTLED" ]]
+}
+
+phase0_now_epoch() {
+  date +%s
+}
+
+phase0_burst_deadline_elapsed() {
+  local start_epoch="$1"
+  local now
+  now="$(phase0_now_epoch)"
+  (( now - start_epoch >= PHASE0_BURST_DEADLINE_SEC ))
+}
+
+check_P1_startup_burst() {
+  local nn="$1" name="$2"
+  local jar_insured claim_id i status pending=1
+  local -a claim_ids=() submit_epochs=() settled=() late_details=()
+
+  jar_insured="$(phase0_mktemp)"
+  if ! register_insured "phase0-burst-insured@example.com" "Phase0BurstGateOnly!" \
+    "Phase0 Burst Insured" "$jar_insured"; then
+    emit_result "$nn" FAIL "$name" "burst insured registration failed (HTTP ${PHASE0_REGISTER_HTTP_CODE})"
+    return
+  fi
+
+  for i in $(seq 1 "${PHASE0_BURST_CLAIM_COUNT}"); do
+    if ! phase0_burst_submit_claim "$jar_insured" "$i"; then
+      emit_result "$nn" FAIL "$name" "burst submit claim ${i}/${PHASE0_BURST_CLAIM_COUNT} failed"
+      return
     fi
-  done < <(find notification-service/src/test -name '*LogLeak*' -o -name '*WorkflowNotification*IT*' 2>/dev/null)
-  return 1
+    claim_id="$(claim_id_from_submit)"
+    if [[ -z "$claim_id" ]]; then
+      emit_result "$nn" FAIL "$name" "burst claim ${i}: could not parse claim id"
+      return
+    fi
+    claim_ids+=("$claim_id")
+    submit_epochs+=("$(phase0_now_epoch)")
+    settled+=(0)
+  done
+
+  while (( pending > 0 )); do
+    pending=0
+    for i in $(seq 0 $((PHASE0_BURST_CLAIM_COUNT - 1))); do
+      if [[ "${settled[i]}" -ne 0 ]]; then
+        continue
+      fi
+      pending=1
+      status="$(claim_status "$jar_insured" "${claim_ids[i]}" 2>/dev/null || true)"
+      if phase0_burst_claim_reached_next_state "$status"; then
+        settled[i]=1
+        continue
+      fi
+      if phase0_burst_deadline_elapsed "${submit_epochs[i]}"; then
+        settled[i]=2
+        late_details+=("claim $((i + 1)) (${claim_ids[i]}) status=${status:-unknown}")
+      fi
+    done
+    if (( pending > 0 )); then
+      sleep 1
+    fi
+  done
+
+  if ((${#late_details[@]} > 0)); then
+    emit_result "$nn" FAIL "$name" "late after ${PHASE0_BURST_DEADLINE_SEC}s per submit: $(IFS='; '; echo "${late_details[*]}")"
+    return
+  fi
+  emit_result "$nn" PASS "$name" "${PHASE0_BURST_CLAIM_COUNT} claims at ${PHASE0_BURST_CLAIM_AMOUNT} reached APPROVED or SETTLED within ${PHASE0_BURST_DEADLINE_SEC}s per claim"
 }
 
 readme_dashboard_url() {
@@ -890,29 +1121,32 @@ readme_dashboard_url() {
   ' README.md 2>/dev/null | tr -d '`' | head -n1
 }
 
-check_01_healthy_and_single_published_port() {
+check_P2_stack_healthy_locked_topics() {
   local nn="$1" name="$2"
-  local not_healthy published host_ports
+  local not_healthy published host_ports fail_reasons=()
+  local entry svc port mapping host_port
+  local expected actual flyway_count url readme_code redis_out
+  local claim_logs topics_ok=1 broker_ok=1 logs_ok=1
+  local kafka_config_output
+
+  if ! phase0_kafka_init_graded_ok; then
+    emit_result "$nn" FAIL "$name" "${PHASE0_KAFKA_INIT_FAIL_REASON}"
+    return
+  fi
+
   not_healthy="$(services_not_fully_healthy_list)"
   if [[ -n "$not_healthy" ]]; then
     emit_result "$nn" FAIL "$name" "unhealthy or starting services: ${not_healthy}"
     return
   fi
+
   published="$(compose ps --format '{{.Ports}}' 2>/dev/null | grep -oE '0\.0\.0\.0:[0-9]+|127\.0\.0\.1:[0-9]+|\[::\]:[0-9]+' || true)"
   host_ports="$(printf '%s\n' "$published" | sed -E 's/.*:([0-9]+)$/\1/' | sort -u | paste -sd, -)"
   if [[ "$host_ports" != "8081" ]]; then
     emit_result "$nn" FAIL "$name" "published host ports=[${host_ports:-none}], expected only 8081"
     return
   fi
-  emit_result "$nn" PASS "$name" "all services healthy; compose ps shows only host port 8081"
-}
 
-check_02_host_port_exposure() {
-  local nn="$1" name="$2"
-  local nc_available=0
-  if command -v nc >/dev/null 2>&1; then
-    nc_available=1
-  fi
   local -a services_ports=(
     'postgres:5432'
     'redis:6379'
@@ -922,7 +1156,6 @@ check_02_host_port_exposure() {
     'settlement-service:8083'
     'notification-service:8084'
   )
-  local entry svc port mapping host_port nc_notes=() fail_reasons=()
   for entry in "${services_ports[@]}"; do
     svc="${entry%%:*}"
     port="${entry##*:}"
@@ -940,116 +1173,81 @@ check_02_host_port_exposure() {
     fi
     if compose_port_is_published "$mapping"; then
       fail_reasons+=("${svc}:${port} compose port returned ${mapping}")
-      continue
-    fi
-    if [[ "$nc_available" -eq 1 ]]; then
-      if nc -z -w 2 localhost "$port" >/dev/null 2>&1; then
-        nc_notes+=("note: ${port} is open on the host by a non-stack process (compose port empty)")
-      fi
     fi
   done
   if ((${#fail_reasons[@]} > 0)); then
     emit_result "$nn" FAIL "$name" "${fail_reasons[0]}"
     return
   fi
-  local http_code
-  http_code="$(curl_http_code "${BASE_URL}/actuator/health")"
-  if [[ "$http_code" == "000" ]]; then
-    emit_result "$nn" FAIL "$name" "compose port OK but claim-service HTTP on 8081 not reachable"
-    return
-  fi
-  local evidence="compose port: only claim-service:8081 published; HTTP 8081 reachable (actuator ${http_code})"
-  if ((${#nc_notes[@]} > 0)); then
-    evidence="${evidence}; ${nc_notes[*]}"
-  elif [[ "$nc_available" -eq 0 ]]; then
-    evidence="${evidence}; nc unavailable for secondary probe"
-  fi
-  emit_result "$nn" PASS "$name" "$evidence"
-}
 
-check_03_redis_noauth_without_password() {
-  local nn="$1" name="$2"
-  local out
-  out="$(compose exec -T redis redis-cli ping 2>&1 || true)"
-  if [[ "$out" == *NOAUTH* ]]; then
-    emit_result "$nn" PASS "$name" "redis-cli ping returned NOAUTH"
-  else
-    emit_result "$nn" FAIL "$name" "expected NOAUTH, got: ${out//$'\n'/ }"
+  url="$(readme_dashboard_url)"
+  if [[ -z "$url" ]]; then
+    emit_result "$nn" FAIL "$name" "could not parse dashboard URL from README.md"
+    return
   fi
-}
+  readme_code="$(curl_http_code "$url")"
+  if [[ "$readme_code" != "200" ]]; then
+    emit_result "$nn" FAIL "$name" "README dashboard GET ${url} returned HTTP ${readme_code}"
+    return
+  fi
 
-check_04_flyway_and_empty_portal_without_demo() {
-  local nn="$1" name="$2"
-  local flyway_count portal_count logs_ok=false
+  redis_out="$(compose exec -T redis redis-cli ping 2>&1 || true)"
+  if [[ "$redis_out" != *NOAUTH* ]]; then
+    emit_result "$nn" FAIL "$name" "redis-cli ping expected NOAUTH, got: ${redis_out//$'\n'/ }"
+    return
+  fi
 
-  phase0_prepare_fresh_compose_stack "c04"
-  if ! compose_with_profile "" up -d --build >/dev/null 2>&1; then
-    emit_result "$nn" FAIL "$name" "compose up without demo profile failed"
-    return
-  fi
-  if ! wait_for_stack_ready; then
-    emit_result "$nn" FAIL "$name" "non-demo stack not ready: ${COMPOSE_PS_STATUS_REPORT}"
-    return
-  fi
-  local active_profiles
-  active_profiles="$(claim_service_spring_profiles)"
-  if [[ "$active_profiles" == *demo* ]]; then
-    emit_result "$nn" FAIL "$name" "expected non-demo stack but claim-service SPRING_PROFILES_ACTIVE=${active_profiles:-<empty>}"
-    return
-  fi
-  local claim_service_logs
-  claim_service_logs="$(claim_service_compose_logs)"
-  if grep -qE 'Successfully applied|Schema .* is up to date|Flyway.*success' <<< "$claim_service_logs" 2>/dev/null; then
-    logs_ok=true
-  fi
-  flyway_count="$(compose exec -T postgres psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -tAc \
+  flyway_count="$(compose exec -T postgres psql -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-insurance}" -tAc \
     "SELECT COUNT(*) FROM claims.flyway_schema_history_claim_service WHERE success = true;" 2>/dev/null | tr -d '[:space:]' || echo 0)"
-  portal_count="$(compose exec -T postgres psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -tAc \
-    "SELECT COUNT(*) FROM claims.portal_users;" 2>/dev/null | tr -d '[:space:]' || echo -1)"
-  if [[ "$flyway_count" =~ ^[0-9]+$ ]] && [[ "$flyway_count" -gt 0 ]] && [[ "$portal_count" == "0" ]]; then
-    emit_result "$nn" PASS "$name" "non-demo stack; flyway_schema_history_claim_service has ${flyway_count} successful migration(s); portal_users count=0"
+  if ! [[ "$flyway_count" =~ ^[0-9]+$ ]] || [[ "$flyway_count" -lt 1 ]]; then
+    emit_result "$nn" FAIL "$name" "flyway_schema_history_claim_service successful rows=${flyway_count}, expected at least 1"
     return
   fi
-  if [[ "$logs_ok" == true ]] && [[ "$portal_count" == "0" ]]; then
-    emit_result "$nn" PASS "$name" "non-demo stack; claim-service Flyway logs OK; portal_users count=0"
-    return
+
+  expected="$(phase0_expected_kafka_topics_sorted)"
+  actual="$(phase0_kafka_topics_list_sorted)"
+  if [[ "$expected" != "$actual" ]]; then
+    topics_ok=0
+    log_line "kafka topic list diff (expected vs actual):"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && log_line "$line"
+    done < <(diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") || true)
   fi
-  emit_result "$nn" FAIL "$name" "flyway_rows=${flyway_count} portal_users=${portal_count} flyway_logs=${logs_ok}"
+
+  kafka_config_output="$(phase0_kafka_configs_sh --describe --entity-type brokers --entity-name "${PHASE0_KAFKA_BROKER_ID}" --all 2>/dev/null || true)"
+  if ! grep -qE 'auto\.create\.topics\.enable=false' <<<"$kafka_config_output"; then
+    broker_ok=0
+  fi
+
+  claim_logs="$(claim_service_compose_logs)"
+  if grep -q 'different partition count' <<<"$claim_logs" 2>/dev/null; then
+    logs_ok=0
+  fi
+
+  if [[ "$topics_ok" -eq 1 && "$broker_ok" -eq 1 && "$logs_ok" -eq 1 ]]; then
+    emit_result "$nn" PASS "$name" "healthy stack; ports locked to 8081; README 200; redis NOAUTH; flyway rows=${flyway_count}; topics match kafka/topics.txt; auto.create.topics.enable=false; kafka-init docker inspect exited(0); no partition-count warnings"
+  else
+    emit_result "$nn" FAIL "$name" "topics_ok=${topics_ok} broker_ok=${broker_ok} claim_logs_ok=${logs_ok}"
+  fi
 }
 
-check_05_demo_sign_in_after_fresh_volume() {
-  local nn="$1" name="$2" jar
-  jar="$(phase0_mktemp)"
+check_P3_login_cache_high_value() {
+  local nn="$1" name="$2"
+  local jar_a jar_b jar_broker jar_agent claim_id code status
+  local active_profiles seeder_found=false seeder_count
 
   if ! demo_profile_enabled; then
-    emit_result "$nn" SKIPPED "$name" "SPRING_PROFILES_ACTIVE in .env does not include demo"
+    emit_result "$nn" FAIL "$name" "SPRING_PROFILES_ACTIVE in .env must include demo"
     return
   fi
-  phase0_prepare_fresh_compose_stack "c05"
-  if ! compose_with_profile "demo" up -d --build >/dev/null 2>&1; then
-    emit_result "$nn" FAIL "$name" "compose up with demo profile failed"
-    return
-  fi
-  if ! wait_for_compose_healthy; then
-    emit_result "$nn" FAIL "$name" "demo stack not ready: ${COMPOSE_PS_STATUS_REPORT}"
-    return
-  fi
-  if ! wait_for_check05_claim_service_readiness; then
-    emit_result "$nn" FAIL "$name" "demo stack readiness: ${HTTP_WAIT_STATUS_REPORT}"
-    return
-  fi
-  if ! wait_for_demo_seeder_all_users; then
-    emit_result "$nn" FAIL "$name" "${HTTP_WAIT_STATUS_REPORT}"
-    return
-  fi
-  local active_profiles seeder_found=false seeder_count
+
   active_profiles="$(claim_service_spring_profiles)"
   seeder_count="$(claim_service_demo_seeder_log_count)"
   if claim_service_demo_seeder_started; then
     seeder_found=true
   fi
-  log_line "[05] claim-service SPRING_PROFILES_ACTIVE=${active_profiles:-<empty>}"
-  log_line "[05] DemoProfileSeeder log line count=${seeder_count}; grep marker found=${seeder_found}"
+  log_line "[P3] claim-service SPRING_PROFILES_ACTIVE=${active_profiles:-<empty>}"
+  log_line "[P3] DemoProfileSeeder log line count=${seeder_count}; grep marker found=${seeder_found}"
   if [[ "$active_profiles" != *demo* ]]; then
     emit_result "$nn" FAIL "$name" "claim-service SPRING_PROFILES_ACTIVE missing demo (got: ${active_profiles:-<empty>})"
     return
@@ -1058,38 +1256,25 @@ check_05_demo_sign_in_after_fresh_volume() {
     emit_result "$nn" FAIL "$name" "claim-service logs missing DemoProfileSeeder line (${DEMO_SEEDER_LOG_MARKER}…)"
     return
   fi
-  if login_user "agent@insureflow.local" "${DEMO_AGENT_PASSWORD}" "$jar"; then
-    if phase0_no_teardown_enabled; then
-      emit_result "$nn" PASS "$name" "agent@insureflow.local login HTTP 200 on fresh project ${PHASE0_ACTIVE_COMPOSE_PROJECT}"
-    else
-      emit_result "$nn" PASS "$name" "agent@insureflow.local login HTTP 200 after down -v && up"
-    fi
-  else
-    log_http_failure "[05] agent@insureflow.local login" "${PHASE0_LAST_HTTP_CODE}"
-    emit_result "$nn" FAIL "$name" "agent@insureflow.local login failed after fresh volume ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
-  fi
-}
 
-check_06_live_cache_authorization_tm_a() {
-  local nn="$1" name="$2"
-  local jar_a jar_b jar_broker jar_agent claim_id code status
-
-  if ! demo_profile_enabled; then
-    emit_result "$nn" SKIPPED "$name" "demo profile required for seeded AGENT and BROKER users"
+  jar_agent="$(phase0_mktemp)"
+  if ! login_user "agent@insureflow.local" "${DEMO_AGENT_PASSWORD}" "$jar_agent"; then
+    log_http_failure "[P3] AGENT login" "${PHASE0_LAST_HTTP_CODE}"
+    emit_result "$nn" FAIL "$name" "AGENT login failed ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
     return
   fi
+
   jar_a="$(phase0_mktemp)"
   jar_b="$(phase0_mktemp)"
   jar_broker="$(phase0_mktemp)"
-  jar_agent="$(phase0_mktemp)"
 
-  if ! register_insured "tm-a-insured-phase0-$(date +%s)@example.com" "${DEMO_INSURED_PASSWORD}" "TM-A Insured A" "$jar_a"; then
-    log_http_failure "[06] INSURED A registration" "${PHASE0_REGISTER_HTTP_CODE}"
-    emit_result "$nn" FAIL "$name" "INSURED A registration for check 06 failed (HTTP ${PHASE0_REGISTER_HTTP_CODE}; $(http_failure_appendix "${PHASE0_REGISTER_HTTP_CODE}"))"
+  if ! register_insured "p3-insured-a-phase0-$(date +%s)@example.com" "${DEMO_INSURED_PASSWORD}" "P3 Insured A" "$jar_a"; then
+    log_http_failure "[P3] INSURED A registration" "${PHASE0_REGISTER_HTTP_CODE}"
+    emit_result "$nn" FAIL "$name" "INSURED A registration failed (HTTP ${PHASE0_REGISTER_HTTP_CODE})"
     return
   fi
   if ! submit_claim_check_06 "$jar_a"; then
-    emit_result "$nn" FAIL "$name" "INSURED A claim submit failed (${CHECK_06_CLAIM_AMOUNT} under 10k authority)"
+    emit_result "$nn" FAIL "$name" "INSURED A claim submit failed (${CHECK_06_CLAIM_AMOUNT} above 10k auto-approve limit)"
     return
   fi
   claim_id="$(claim_id_from_submit)"
@@ -1098,14 +1283,9 @@ check_06_live_cache_authorization_tm_a() {
     return
   fi
 
-  if ! login_user "agent@insureflow.local" "${DEMO_AGENT_PASSWORD}" "$jar_agent"; then
-    log_http_failure "[06] AGENT login" "${PHASE0_LAST_HTTP_CODE}"
-    emit_result "$nn" FAIL "$name" "AGENT login failed ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
-    return
-  fi
-  log_check_06_redis_scan "before-read"
+  log_check_06_redis_scan "before-read" "$claim_id"
   if redis_scan_contains_claim_id "$claim_id"; then
-    emit_result "$nn" FAIL "$name" "before-read: claims* key for claim already present before AGENT read"
+    emit_result "$nn" FAIL "$name" "before-read: $(redis_claim_cache_key_for_id "$claim_id") already present before AGENT read"
     return
   fi
   code="$(curl_json GET "${BASE_URL}/claims/${claim_id}" "$jar_agent")"
@@ -1113,127 +1293,59 @@ check_06_live_cache_authorization_tm_a() {
     emit_result "$nn" FAIL "$name" "AGENT warm-cache GET returned HTTP ${code}"
     return
   fi
-  log_check_06_redis_scan "after-read"
+  log_check_06_redis_scan "after-read" "$claim_id"
   if ! redis_scan_contains_claim_id "$claim_id"; then
-    emit_result "$nn" FAIL "$name" "after-read: claims* key for claim missing after AGENT read (Redis cache not in use)"
+    emit_result "$nn" FAIL "$name" "after-read: claims* key for claim missing after AGENT read"
+    return
+  fi
+  status="$(claim_status "$jar_a" "$claim_id" || true)"
+  if [[ "$status" != "SUBMITTED" ]]; then
+    emit_result "$nn" FAIL "$name" "claim ${CHECK_06_CLAIM_AMOUNT} above 10k limit status=${status:-unknown}, expected SUBMITTED before AGENT decide"
     return
   fi
 
-  if ! register_insured "insured-b-phase0@example.com" "${DEMO_INSURED_PASSWORD}" "Insured B Phase0" "$jar_b"; then
-    log_http_failure "[06] INSURED B registration" "${PHASE0_LAST_HTTP_CODE}"
-    emit_result "$nn" FAIL "$name" "INSURED B registration failed ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
+  if ! register_insured "p3-insured-b-phase0-$(date +%s)@example.com" "${DEMO_INSURED_PASSWORD}" "P3 Insured B" "$jar_b"; then
+    emit_result "$nn" FAIL "$name" "INSURED B registration failed"
     return
   fi
   code="$(curl_json GET "${BASE_URL}/claims/${claim_id}" "$jar_b")"
   if [[ "$code" != "404" ]]; then
-    emit_result "$nn" FAIL "$name" "INSURED B GET after cache warm returned HTTP ${code}, expected 404"
+    emit_result "$nn" FAIL "$name" "INSURED B GET returned HTTP ${code}, expected 404"
     return
   fi
 
   if ! login_user "broker@insureflow.local" "${DEMO_BROKER_PASSWORD}" "$jar_broker"; then
-    log_http_failure "[06] BROKER login" "${PHASE0_LAST_HTTP_CODE}"
-    emit_result "$nn" FAIL "$name" "BROKER login failed ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
+    emit_result "$nn" FAIL "$name" "BROKER login failed"
     return
   fi
   code="$(curl_json GET "${BASE_URL}/claims/${claim_id}" "$jar_broker")"
   if [[ "$code" != "404" ]]; then
-    emit_result "$nn" FAIL "$name" "BROKER GET after cache warm returned HTTP ${code}, expected 404"
+    emit_result "$nn" FAIL "$name" "BROKER GET returned HTTP ${code}, expected 404"
     return
   fi
 
   code="$(curl_json POST "${BASE_URL}/claims/${claim_id}/decision" "$jar_agent" \
-    '{"approved":true,"reason":"Phase0 TM-A cache eviction"}')"
+    '{"approved":true,"reason":"Phase0 P3 cache eviction over 10k"}')"
   if [[ "$code" != "200" ]]; then
     emit_result "$nn" FAIL "$name" "AGENT decide returned HTTP ${code}"
     return
   fi
-  log_check_06_redis_scan "after-decide"
+  log_check_06_redis_scan "after-decide" "$claim_id"
   if redis_scan_contains_claim_id "$claim_id"; then
-    emit_result "$nn" FAIL "$name" "after-decide: claims* key for claim still present after decide (scan must run before AGENT re-read)"
+    emit_result "$nn" FAIL "$name" "after-decide: $(redis_claim_cache_key_for_id "$claim_id") still present (scan before AGENT re-read)"
     return
   fi
   status="$(claim_status "$jar_agent" "$claim_id" || true)"
   if [[ "$status" != "APPROVED" ]]; then
-    emit_result "$nn" FAIL "$name" "after-reread: AGENT GET status=${status:-unknown}, expected APPROVED"
+    emit_result "$nn" FAIL "$name" "after re-read status=${status:-unknown}, expected APPROVED"
     return
   fi
-  log_check_06_redis_scan "after-reread"
+  log_check_06_redis_scan "after-reread" "$claim_id"
   if ! redis_scan_contains_claim_id "$claim_id"; then
-    emit_result "$nn" FAIL "$name" "after-reread: claims* key for claim missing after AGENT GET (CachedClaimReader should repopulate cache)"
+    emit_result "$nn" FAIL "$name" "after-reread: $(redis_claim_cache_key_for_id "$claim_id") missing after AGENT GET"
     return
   fi
-  emit_result "$nn" PASS "$name" "INSURED B and BROKER HTTP 404; claim ${claim_id} Redis absent before read, present after read, absent after decide, present after re-read; status APPROVED (${CHECK_06_CLAIM_AMOUNT})"
-}
-
-check_07_tm_b_kafka_integration() {
-  local nn="$1" name="$2"
-  if has_tm_b_kafka_integration_test; then
-    emit_result "$nn" SKIPPED "$name" "Kafka TM-B test exists but isn't wired into this script"
-    return
-  fi
-  emit_result "$nn" SKIPPED "$name" "no Kafka integration test for TM-B (unit-only WorkflowNotificationListenerLogLeakTest on main)"
-}
-
-check_12_readme_dashboard_url() {
-  local nn="$1" name="$2"
-  local url code
-  url="$(readme_dashboard_url)"
-  if [[ -z "$url" ]]; then
-    emit_result "$nn" FAIL "$name" "could not parse dashboard URL from README.md"
-    return
-  fi
-  code="$(curl_http_code "$url")"
-  if [[ "$code" == "200" ]]; then
-    emit_result "$nn" PASS "$name" "GET ${url} returned HTTP 200"
-  else
-    emit_result "$nn" FAIL "$name" "GET ${url} returned HTTP ${code}"
-  fi
-}
-
-check_13_tm_d_high_value_manual_decide() {
-  local nn="$1" name="$2"
-  local jar_insured jar_agent claim_id status code
-
-  if ! demo_profile_enabled; then
-    emit_result "$nn" SKIPPED "$name" "demo profile required for legacy AGENT user"
-    return
-  fi
-  jar_insured="$(phase0_mktemp)"
-  jar_agent="$(phase0_mktemp)"
-
-  if ! login_user "insured@insureflow.local" "${DEMO_INSURED_PASSWORD}" "$jar_insured"; then
-    log_http_failure "[13] insured@insureflow.local login" "${PHASE0_LAST_HTTP_CODE}"
-    emit_result "$nn" FAIL "$name" "insured demo login failed ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
-    return
-  fi
-  if ! submit_claim "$jar_insured" "15000.00"; then
-    emit_result "$nn" FAIL "$name" "high-value claim submit failed"
-    return
-  fi
-  claim_id="$(claim_id_from_submit)"
-  sleep 8
-  status="$(claim_status "$jar_insured" "$claim_id" || true)"
-  if [[ "$status" != "SUBMITTED" ]]; then
-    emit_result "$nn" FAIL "$name" "claim over 10k status=${status:-unknown}, expected SUBMITTED before manual decide"
-    return
-  fi
-  if ! login_user "agent@insureflow.local" "${DEMO_AGENT_PASSWORD}" "$jar_agent"; then
-    log_http_failure "[13] agent@insureflow.local login" "${PHASE0_LAST_HTTP_CODE}"
-    emit_result "$nn" FAIL "$name" "legacy AGENT login failed ($(http_failure_appendix "${PHASE0_LAST_HTTP_CODE}"))"
-    return
-  fi
-  code="$(curl_json POST "${BASE_URL}/claims/${claim_id}/decision" "$jar_agent" \
-    '{"approved":true,"reason":"TM-D manual approval over 10k"}')"
-  if [[ "$code" != "200" ]]; then
-    emit_result "$nn" FAIL "$name" "AGENT decide returned HTTP ${code}"
-    return
-  fi
-  status="$(claim_status "$jar_agent" "$claim_id" || true)"
-  if [[ "$status" == "APPROVED" || "$status" == "REJECTED" ]]; then
-    emit_result "$nn" PASS "$name" "claim stayed SUBMITTED until AGENT decide; final status=${status}"
-  else
-    emit_result "$nn" FAIL "$name" "after AGENT decide status=${status:-unknown}"
-  fi
+  emit_result "$nn" PASS "$name" "demo seeder + AGENT login; ${CHECK_06_CLAIM_AMOUNT} stayed SUBMITTED; cache isolation; decide evicted; APPROVED with cache repopulated"
 }
 
 validate_checks_array_functions() {
@@ -1252,13 +1364,9 @@ validate_checks_array_functions() {
 }
 
 run_all_checks() {
-  local spec nn display fn stub_reason
+  local spec nn display fn
   for spec in "${CHECKS[@]}"; do
-    IFS='|' read -r nn display fn stub_reason <<< "$spec"
-    if [[ "$fn" == "." ]]; then
-      emit_result "$nn" SKIPPED "$display" "$stub_reason"
-      continue
-    fi
+    IFS='|' read -r nn display fn <<< "$spec"
     "$fn" "$nn" "$display" || :
   done
 }
@@ -1268,9 +1376,9 @@ print_summary() {
 }
 
 list_checks() {
-  local spec nn display _fn _stub
+  local spec nn display _fn
   for spec in "${CHECKS[@]}"; do
-    IFS='|' read -r nn display _fn _stub <<< "$spec"
+    IFS='|' read -r nn display _fn <<< "$spec"
     printf '%s\t%s\n' "$nn" "$display"
   done
 }
@@ -1290,6 +1398,11 @@ main() {
   log_repo_git_state
   log_line "repo=${REPO_ROOT} COMPOSE_PROJECT=${COMPOSE_PROJECT}"
 
+  if ! demo_profile_enabled; then
+    printf 'Phase 0 requires SPRING_PROFILES_ACTIVE to include demo in .env\n' >&2
+    exit 1
+  fi
+
   if phase0_no_teardown_enabled; then
     PHASE0_ACTIVE_COMPOSE_PROJECT=""
     log_line "PHASE0_NO_TEARDOWN=1: per-phase compose projects; skipping down/rm teardown"
@@ -1297,16 +1410,23 @@ main() {
     phase0_compose_stop_project "${REQUIRED_COMPOSE_PROJECT}"
     phase0_switch_compose_project "${PHASE0_PROJECT_STARTUP}"
     phase0_log_phase_compose_header "startup"
-    log_line "compose up -d --build (project=${PHASE0_ACTIVE_COMPOSE_PROJECT})"
+    log_line "compose up -d --build demo profile (project=${PHASE0_ACTIVE_COMPOSE_PROJECT})"
+    compose_with_profile demo up -d --build
   else
-    log_line "compose down -v (throwaway stack)"
+    log_line "compose down -v (throwaway demo stack)"
     compose down -v
-    log_line "compose up -d --build"
+    log_line "compose up -d --build demo profile"
+    compose_with_profile demo up -d --build
   fi
-  compose up -d --build
 
   if ! wait_for_stack_ready; then
     log_line "WARN: initial stack readiness timed out (health and/or claim-service HTTP); running checks anyway"
+  fi
+  if ! wait_for_check05_claim_service_readiness; then
+    log_line "WARN: demo claim-service readiness timed out: ${HTTP_WAIT_STATUS_REPORT}"
+  fi
+  if ! wait_for_demo_seeder_all_users; then
+    log_line "WARN: demo seeder wait timed out: ${HTTP_WAIT_STATUS_REPORT}"
   fi
 
   run_all_checks

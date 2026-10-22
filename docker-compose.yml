@@ -39,12 +39,40 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 10
+
+  kafka-init:
+    image: apache/kafka:3.8.0
+    restart: "no"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./kafka/topics.txt:/kafka/topics.txt:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        topics_file=/kafka/topics.txt
+        bootstrap=kafka:9092
+        kafka_topics=/opt/kafka/bin/kafka-topics.sh
+        while IFS= read -r topic || [[ -n "$$topic" ]]; do
+          [[ -z "$$topic" ]] && continue
+          "$$kafka_topics" --bootstrap-server "$$bootstrap" --create --if-not-exists \
+            --topic "$$topic" --partitions 3 --replication-factor 1
+          desc="$$("$$kafka_topics" --bootstrap-server "$$bootstrap" --describe --topic "$$topic")"
+          if ! grep -q 'PartitionCount: 3' <<< "$$desc"; then
+            echo "kafka-init: topic $$topic missing PartitionCount: 3 (no in-place raise; down -v and fresh start)" >&2
+            printf '%s\n' "$$desc" >&2
+            exit 1
+          fi
+          printf '%s\n' "$$desc"
+        done < "$$topics_file"
 
   claim-service:
     build:
@@ -61,6 +89,7 @@ services:
       REDIS_HOST: ${REDIS_HOST:?}
       REDIS_PASSWORD: ${REDIS_PASSWORD:?}
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:?}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?}
       DEMO_ADJUSTER_PASSWORD: ${DEMO_ADJUSTER_PASSWORD:-}
       DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-}
       DEMO_AGENT_PASSWORD: ${DEMO_AGENT_PASSWORD:-}
@@ -79,6 +108,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:8081/actuator/health || exit 1"]
       interval: 10s
@@ -98,11 +129,14 @@ services:
       DB_USERNAME: ${DB_USERNAME:?}
       DB_PASSWORD: ${DB_PASSWORD:?}
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:?}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?}
     depends_on:
       postgres:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:8082/actuator/health || exit 1"]
       interval: 10s
@@ -122,11 +156,15 @@ services:
       DB_USERNAME: ${DB_USERNAME:?}
       DB_PASSWORD: ${DB_PASSWORD:?}
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:?}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?}
+      SETTLEMENT_APPROVAL_SERVICE_BASE_URL: http://approval-service:8082
     depends_on:
       postgres:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:8083/actuator/health || exit 1"]
       interval: 10s
@@ -146,6 +184,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:8084/actuator/health || exit 1"]
       interval: 10s

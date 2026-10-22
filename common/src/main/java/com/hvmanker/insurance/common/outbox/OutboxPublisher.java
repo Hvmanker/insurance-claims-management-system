@@ -1,0 +1,88 @@
+package com.hvmanker.insurance.common.outbox;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.sql.ResultSet;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
+
+/**
+ * Polls unsent outbox rows and publishes them to Kafka. {@code sent_at} is set only after the
+ * broker acknowledges the send ({@code Future#get} completes successfully).
+ */
+public class OutboxPublisher {
+
+    private static final Logger log = LoggerFactory.getLogger(OutboxPublisher.class);
+
+    private static final RowMapper<OutboxRecord> OUTBOX_ROW_MAPPER = (ResultSet rs, int rowNum) -> new OutboxRecord(
+            rs.getLong("id"),
+            rs.getObject("event_id", UUID.class),
+            rs.getObject("aggregate_id", UUID.class),
+            rs.getString("topic"),
+            rs.getString("payload"));
+
+    private final JdbcTemplate jdbcTemplate;
+    private final OutboxMessageSender messageSender;
+    private final long advisoryLockKey;
+
+    public OutboxPublisher(
+            JdbcTemplate jdbcTemplate,
+            OutboxMessageSender messageSender,
+            long advisoryLockKey) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.messageSender = messageSender;
+        this.advisoryLockKey = advisoryLockKey;
+    }
+
+    @Scheduled(fixedDelayString = "${insurance.outbox.poll-interval-ms:1000}")
+    @Transactional
+    public void publishPending() {
+        Boolean locked = jdbcTemplate.queryForObject(
+                "SELECT pg_try_advisory_xact_lock(?)",
+                Boolean.class,
+                advisoryLockKey);
+        if (!Boolean.TRUE.equals(locked)) {
+            return;
+        }
+
+        List<OutboxRecord> pending = jdbcTemplate.query(
+                """
+                SELECT id, event_id, aggregate_id, topic, payload::text AS payload
+                FROM outbox
+                WHERE sent_at IS NULL
+                ORDER BY id
+                """,
+                OUTBOX_ROW_MAPPER);
+
+        for (OutboxRecord record : pending) {
+            try {
+                sendAndMarkSent(record);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (ExecutionException | TimeoutException | RuntimeException exception) {
+                log.warn(
+                        "outbox publish failed outboxId={} eventId={}",
+                        record.id(),
+                        record.eventId(),
+                        exception);
+                return;
+            }
+        }
+    }
+
+    private void sendAndMarkSent(OutboxRecord record)
+            throws InterruptedException, ExecutionException, TimeoutException {
+        messageSender.send(record);
+        jdbcTemplate.update(
+                "UPDATE outbox SET sent_at = now() WHERE id = ?",
+                record.id());
+    }
+}
