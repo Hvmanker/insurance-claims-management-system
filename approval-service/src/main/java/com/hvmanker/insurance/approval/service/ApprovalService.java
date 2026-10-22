@@ -105,9 +105,6 @@ public class ApprovalService {
                 targetStatus,
                 List.of(WorkflowStatus.ANALYSIS_PENDING, WorkflowStatus.REVIEW_READY));
         if (updated == 0) {
-            if (!claimWorkflowStore.existsByClaimId(claimId)) {
-                throw new ClaimWorkflowNotFoundException();
-            }
             decisionConflictRecorder.recordHumanLostConflict(
                     claimId,
                     decidedBy.userId(),

@@ -29,6 +29,14 @@ public class ClaimWorkflowStore {
         return inserted == 1;
     }
 
+    public boolean existsByClaimId(UUID claimId) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM claim_workflow WHERE claim_id = ?",
+                Integer.class,
+                claimId);
+        return count != null && count > 0;
+    }
+
     public int transitionStatus(UUID claimId, String newStatus, List<String> allowedCurrentStatuses) {
         if (allowedCurrentStatuses.isEmpty()) {
             return 0;
