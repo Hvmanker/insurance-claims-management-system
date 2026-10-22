@@ -2,13 +2,10 @@ package com.hvmanker.insurance.common.outbox;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
-import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
@@ -53,14 +50,6 @@ public class OutboxPublisher {
         this.messageSender = messageSender;
         this.advisoryLockKey = advisoryLockKey;
         this.advisoryLockObserver = advisoryLockObserver;
-    }
-
-    public OutboxPublisher(
-            JdbcTemplate jdbcTemplate,
-            KafkaTemplate<String, String> kafkaTemplate,
-            long advisoryLockKey,
-            Duration sendTimeout) {
-        this(jdbcTemplate, OutboxMessageSender.kafka(kafkaTemplate, sendTimeout), advisoryLockKey, null);
     }
 
     @Scheduled(fixedDelayString = "${insurance.outbox.poll-interval-ms:1000}")
