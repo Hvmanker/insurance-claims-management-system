@@ -128,6 +128,7 @@ services:
       DB_USERNAME: ${DB_USERNAME:?}
       DB_PASSWORD: ${DB_PASSWORD:?}
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:?}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?}
     depends_on:
       postgres:
         condition: service_healthy
