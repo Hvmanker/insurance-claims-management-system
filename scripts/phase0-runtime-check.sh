@@ -538,7 +538,7 @@ compose_port_is_published() {
 }
 
 phase0_stamp_field() {
-  local key="$1" stamp_file="${REPO_ROOT}/STAMP.txt" line value alt_key=""
+  local key="$1" stamp_file="${REPO_ROOT}/STAMP.txt" line="" value="" alt_key=""
   [[ "$key" == "commit" ]] && alt_key="tip"
   if [[ -f "$stamp_file" ]]; then
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -551,8 +551,11 @@ phase0_stamp_field() {
     done < "$stamp_file"
     value="${value#"${value%%[![:space:]]*}"}"
     value="${value%"${value##*[![:space:]]}"}"
-    [[ -n "$value" ]] && printf '%s' "$value"
+    if [[ -n "$value" ]]; then
+      printf '%s' "$value"
+    fi
   fi
+  return 0
 }
 
 log_repo_git_state() {
@@ -580,9 +583,15 @@ log_repo_git_state() {
   stamp_commit="$(phase0_stamp_field commit)"
   stamp_tree="$(phase0_stamp_field tree)"
   stamp_tarball="$(phase0_stamp_field tarball_sha256)"
-  [[ -z "$head" && -n "$stamp_commit" ]] && head="$stamp_commit"
-  [[ -z "$tree" && -n "$stamp_tree" ]] && tree="$stamp_tree"
-  [[ -z "$tarball_sha256" && -n "$stamp_tarball" ]] && tarball_sha256="$stamp_tarball"
+  if [[ -z "$head" && -n "$stamp_commit" ]]; then
+    head="$stamp_commit"
+  fi
+  if [[ -z "$tree" && -n "$stamp_tree" ]]; then
+    tree="$stamp_tree"
+  fi
+  if [[ -z "$tarball_sha256" && -n "$stamp_tarball" ]]; then
+    tarball_sha256="$stamp_tarball"
+  fi
 
   if [[ -n "$head" ]]; then
     log_line "claims commit: ${head}"

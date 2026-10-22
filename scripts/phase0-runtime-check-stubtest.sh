@@ -442,4 +442,130 @@ if [[ "${PHASE0_NO_TEARDOWN:-}" != "1" ]]; then
   rm -f "$DOCKER_STUB_LOG"
 fi
 
+phase0_stub_assert_empty_stamp_field_succeeds_under_errexit() {
+  local work_dir="$1" stamp_body="$2"
+  local probe_rc=0 probe_out=""
+
+  rm -rf "$work_dir"
+  mkdir -p "$work_dir"
+  printf '%s' "$stamp_body" > "${work_dir}/STAMP.txt"
+  probe_out="$(
+    set -euo pipefail
+    REPO_ROOT="$work_dir"
+    phase0_stamp_field tarball_sha256 >/dev/null
+    printf continued
+  )" 2>/dev/null || probe_rc=$?
+  if [[ "$probe_rc" -ne 0 ]]; then
+    echo "FAIL: empty STAMP tarball_sha256 must not fail under errexit (rc=${probe_rc})" >&2
+    return 1
+  fi
+  if [[ "$probe_out" != "continued" ]]; then
+    echo "FAIL: phase0_stamp_field should allow caller to continue under errexit" >&2
+    return 1
+  fi
+  return 0
+}
+
+phase0_stub_run_log_repo_git_state_no_git() {
+  local work_dir="$1"
+  local claims_commit="${2-}"
+  local claims_tree="${3-}"
+  local claims_tarball="${4-}"
+  local stamp_body="${5-}"
+  local out_file rc=0
+
+  rm -rf "$work_dir"
+  mkdir -p "$work_dir"
+  if [[ -n "$stamp_body" ]]; then
+    printf '%s' "$stamp_body" > "${work_dir}/STAMP.txt"
+  fi
+  out_file="$(mktemp)"
+  phase0_register_tmp "$out_file"
+  (
+    set -euo pipefail
+    if [[ -n "$claims_commit" ]]; then
+      export CLAIMS_COMMIT="$claims_commit"
+    else
+      unset CLAIMS_COMMIT
+    fi
+    if [[ -n "$claims_tree" ]]; then
+      export CLAIMS_TREE="$claims_tree"
+    else
+      unset CLAIMS_TREE
+    fi
+    if [[ -n "$claims_tarball" ]]; then
+      export CLAIMS_TARBALL_SHA256="$claims_tarball"
+    else
+      unset CLAIMS_TARBALL_SHA256
+    fi
+    REPO_ROOT="$work_dir"
+    log_repo_git_state
+  ) >"$out_file" 2>&1 || rc=$?
+  printf '%s' "$rc"
+  printf '\n'
+  cat "$out_file"
+}
+
+echo "stub: log_repo_git_state without .git uses CLAIMS_* when STAMP tarball_sha256 is empty"
+stamp_work="$(mktemp -d)"
+if ! phase0_stub_assert_empty_stamp_field_succeeds_under_errexit \
+  "$stamp_work" \
+  $'commit=stampcommit\ntree=stamptree\ntarball_sha256=\n'; then
+  exit 1
+fi
+stamp_out="$(phase0_stub_run_log_repo_git_state_no_git \
+  "$stamp_work" \
+  "abc123commit" \
+  "def456tree" \
+  "sha789tarball" \
+  $'commit=stampcommit\ntree=stamptree\ntarball_sha256=\n')"
+stamp_rc="${stamp_out%%$'\n'*}"
+stamp_log="${stamp_out#*$'\n'}"
+if [[ "$stamp_rc" -ne 0 ]]; then
+  echo "FAIL: log_repo_git_state should not exit early when STAMP tarball_sha256 is empty (rc=${stamp_rc})" >&2
+  echo "$stamp_log" >&2
+  exit 1
+fi
+if ! grep -q 'claims commit: abc123commit' <<<"$stamp_log"; then
+  echo "FAIL: expected CLAIMS_COMMIT in log_repo_git_state output" >&2
+  echo "$stamp_log" >&2
+  exit 1
+fi
+if ! grep -q 'claims tree: def456tree' <<<"$stamp_log"; then
+  echo "FAIL: expected CLAIMS_TREE in log_repo_git_state output" >&2
+  echo "$stamp_log" >&2
+  exit 1
+fi
+if ! grep -q 'claims tarball sha256: sha789tarball' <<<"$stamp_log"; then
+  echo "FAIL: expected CLAIMS_TARBALL_SHA256 in log_repo_git_state output" >&2
+  echo "$stamp_log" >&2
+  exit 1
+fi
+
+echo "stub: log_repo_git_state without .git prints UNKNOWN when claims and STAMP are empty"
+empty_work="$(mktemp -d)"
+empty_out="$(phase0_stub_run_log_repo_git_state_no_git "$empty_work" "" "" "" "")"
+empty_rc="${empty_out%%$'\n'*}"
+empty_log="${empty_out#*$'\n'}"
+if [[ "$empty_rc" -ne 0 ]]; then
+  echo "FAIL: log_repo_git_state should continue with UNKNOWN claims (rc=${empty_rc})" >&2
+  echo "$empty_log" >&2
+  exit 1
+fi
+if ! grep -q 'claims commit: UNKNOWN' <<<"$empty_log"; then
+  echo "FAIL: expected UNKNOWN commit line" >&2
+  echo "$empty_log" >&2
+  exit 1
+fi
+if ! grep -q 'claims tree: UNKNOWN' <<<"$empty_log"; then
+  echo "FAIL: expected UNKNOWN tree line" >&2
+  echo "$empty_log" >&2
+  exit 1
+fi
+if ! grep -q 'claims tarball sha256: UNKNOWN' <<<"$empty_log"; then
+  echo "FAIL: expected UNKNOWN tarball line" >&2
+  echo "$empty_log" >&2
+  exit 1
+fi
+
 echo "stub: all OK"
