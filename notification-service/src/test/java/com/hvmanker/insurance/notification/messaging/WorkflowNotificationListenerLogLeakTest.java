@@ -118,13 +118,13 @@ class WorkflowNotificationListenerLogLeakTest {
                 decidedBy,
                 Instant.parse("2026-01-01T00:00:00Z")));
 
-        assertDecidedByUserIdAbsent(DECIDED_BY_LEAK_CANARY);
+        assertThat(combinedLogText()).doesNotContain(DECIDED_BY_LEAK_CANARY);
     }
 
     @Test
     void leakDetectorCatchesCanary() {
         listenerLogger.info(DECIDED_BY_LEAK_CANARY);
-        assertThat(countCanaryOccurrences(DECIDED_BY_LEAK_CANARY)).isEqualTo(1);
+        assertThat(combinedLogText()).contains(DECIDED_BY_LEAK_CANARY);
     }
 
     private void assertNoSensitiveDataInLogs() {
@@ -132,15 +132,7 @@ class WorkflowNotificationListenerLogLeakTest {
         assertThat(combined).doesNotContain(LEAK_POLICY);
         assertThat(combined).doesNotContain(LEAK_REASON);
         assertThat(combined).doesNotContain("987654.32");
-        assertDecidedByUserIdAbsent(DECIDED_BY_LEAK_CANARY);
-    }
-
-    private void assertDecidedByUserIdAbsent(String userId) {
-        assertThat(countCanaryOccurrences(userId)).isZero();
-    }
-
-    private int countCanaryOccurrences(String userId) {
-        return (int) combinedLogText().split(userId, -1).length - 1;
+        assertThat(combined).doesNotContain(DECIDED_BY_LEAK_CANARY);
     }
 
     private String combinedLogText() {
