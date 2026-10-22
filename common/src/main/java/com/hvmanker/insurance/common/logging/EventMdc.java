@@ -1,5 +1,6 @@
 package com.hvmanker.insurance.common.logging;
 
+import org.slf4j.Logger;
 import org.slf4j.MDC;
 
 import java.util.UUID;
@@ -19,6 +20,10 @@ public final class EventMdc implements AutoCloseable {
         MDC.put(CLAIM_ID_KEY, claimId.toString());
         MDC.put(EVENT_ID_KEY, eventId.toString());
         return new EventMdc();
+    }
+
+    public static void logDuplicateSkipped(Logger log, UUID claimId, UUID eventId) {
+        log.info("duplicate event skipped claimId={} eventId={}", claimId, eventId);
     }
 
     @Override

@@ -1,22 +1,17 @@
 package com.hvmanker.insurance.common.outbox;
 
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.header.internals.RecordHeader;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -26,8 +21,6 @@ import java.util.concurrent.TimeoutException;
  * the send ({@code Future#get} completes successfully).
  */
 public class OutboxPublisher {
-
-    private static final String EVENT_ID_HEADER = "eventId";
 
     private static final RowMapper<OutboxRecord> OUTBOX_ROW_MAPPER = (ResultSet rs, int rowNum) -> new OutboxRecord(
             rs.getLong("id"),
@@ -39,19 +32,24 @@ public class OutboxPublisher {
             rs.getObject("sent_at", Instant.class));
 
     private final JdbcTemplate jdbcTemplate;
-    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final OutboxMessageSender messageSender;
     private final long advisoryLockKey;
-    private final Duration sendTimeout;
+
+    public OutboxPublisher(
+            JdbcTemplate jdbcTemplate,
+            OutboxMessageSender messageSender,
+            long advisoryLockKey) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.messageSender = messageSender;
+        this.advisoryLockKey = advisoryLockKey;
+    }
 
     public OutboxPublisher(
             JdbcTemplate jdbcTemplate,
             KafkaTemplate<String, String> kafkaTemplate,
             long advisoryLockKey,
             Duration sendTimeout) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.kafkaTemplate = kafkaTemplate;
-        this.advisoryLockKey = advisoryLockKey;
-        this.sendTimeout = sendTimeout;
+        this(jdbcTemplate, OutboxMessageSender.kafka(kafkaTemplate, sendTimeout), advisoryLockKey);
     }
 
     @Scheduled(fixedDelayString = "${insurance.outbox.poll-interval-ms:1000}")
@@ -82,23 +80,15 @@ public class OutboxPublisher {
                 return;
             } catch (ExecutionException | TimeoutException exception) {
                 return;
+            } catch (RuntimeException exception) {
+                return;
             }
         }
     }
 
     private void sendAndMarkSent(OutboxRecord record)
             throws InterruptedException, ExecutionException, TimeoutException {
-        String claimIdKey = record.aggregateId().toString();
-        ProducerRecord<String, String> message = new ProducerRecord<>(
-                record.topic(),
-                claimIdKey,
-                record.payload());
-        message.headers().add(new RecordHeader(
-                EVENT_ID_HEADER,
-                record.eventId().toString().getBytes(StandardCharsets.UTF_8)));
-
-        kafkaTemplate.send(message).get(sendTimeout.toMillis(), TimeUnit.MILLISECONDS);
-
+        messageSender.send(record);
         jdbcTemplate.update(
                 "UPDATE outbox SET sent_at = now() WHERE id = ?",
                 record.id());
