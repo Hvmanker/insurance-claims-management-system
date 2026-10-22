@@ -1,6 +1,10 @@
 package com.hvmanker.insurance.approval.integration;
 
 import com.hvmanker.insurance.approval.ApprovalServiceApplication;
+import com.hvmanker.insurance.approval.messaging.AnalysisListener;
+import com.hvmanker.insurance.approval.service.ApprovalService;
+import com.hvmanker.insurance.common.events.ClaimAnalysisCompletedEvent;
+import com.hvmanker.insurance.common.events.DecidedBy;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
@@ -21,7 +25,10 @@ import org.apache.kafka.common.header.internals.RecordHeader;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.RepeatedTest;
+import org.junit.jupiter.api.RepetitionInfo;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.Import;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -61,8 +68,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
+import static com.hvmanker.insurance.common.KafkaTopics.CLAIM_ANALYSIS_COMPLETED;
 import static com.hvmanker.insurance.common.KafkaTopics.CLAIM_ANALYSIS_REQUESTED;
 import static com.hvmanker.insurance.common.KafkaTopics.CLAIM_APPROVED;
 import static com.hvmanker.insurance.common.KafkaTopics.CLAIM_MANUAL_DECISION;
@@ -78,6 +87,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         classes = ApprovalServiceApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
+@Import(ApprovalDecisionRaceTestConfig.class)
 class ApprovalDecisionIT {
     private static final String TOKEN = "test-internal-token-1A3";
     private static final String AUTH = "Bearer " + TOKEN;
@@ -107,6 +117,8 @@ class ApprovalDecisionIT {
         registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
         registry.add("KAFKA_BOOTSTRAP_SERVERS", KAFKA::getBootstrapServers);
         registry.add("INTERNAL_API_TOKEN", () -> TOKEN);
+        registry.add("approval.analyser.enabled", () -> "false");
+        registry.add("insurance.outbox.poll-interval-ms", () -> "200");
     }
 
     @LocalServerPort
@@ -117,6 +129,15 @@ class ApprovalDecisionIT {
 
     @Autowired
     ApplicationContext applicationContext;
+
+    @Autowired
+    ApprovalService approvalService;
+
+    @Autowired
+    AnalysisListener analysisListener;
+
+    @Autowired
+    LatchingDecisionRaceHook latchingDecisionRaceHook;
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
     private final ObjectMapper objectMapper = new ObjectMapper()
@@ -131,7 +152,8 @@ class ApprovalDecisionIT {
                     new NewTopic(CLAIM_MANUAL_DECISION, 1, (short) 1),
                     new NewTopic(CLAIM_APPROVED, 1, (short) 1),
                     new NewTopic(CLAIM_REJECTED, 1, (short) 1),
-                    new NewTopic(CLAIM_ANALYSIS_REQUESTED, 1, (short) 1))).all().get();
+                    new NewTopic(CLAIM_ANALYSIS_REQUESTED, 1, (short) 1),
+                    new NewTopic(CLAIM_ANALYSIS_COMPLETED, 1, (short) 1))).all().get();
         }
     }
 
@@ -578,6 +600,86 @@ class ApprovalDecisionIT {
     }
 
     @Test
+    void analysisCompletedAutoApproves4000WithNoFlags() {
+        UUID claimId = uuid("000000000350");
+        seedDecidable(claimId);
+        UUID eventId = uuid("0000000003f0");
+        invokeAnalysisCompleted(claimId, eventId, List.of());
+
+        assertEquals("APPROVED", workflowStatus(claimId));
+        assertEquals(1, countApprovals(claimId));
+        Map<String, Object> approval = approvalSnapshot(claimId);
+        assertEquals("AUTO", approval.get("source"));
+        assertEquals(DecidedBy.AUTO_APPROVAL.userId(), approval.get("decided_by_user_id"));
+        assertEquals(1, decisionOutboxCount(claimId));
+        assertEquals(0, countDecisionAudit(claimId));
+    }
+
+    @Test
+    void analysisCompletedHighAmountRoutesToReviewReadyWithoutDecisionRow() {
+        UUID claimId = uuid("000000000351");
+        seedWorkflow(claimId, "ANALYSIS_PENDING", new BigDecimal("15000.00"));
+        UUID eventId = uuid("0000000003f1");
+        invokeAnalysisCompleted(claimId, eventId, List.of());
+
+        assertEquals("REVIEW_READY", workflowStatus(claimId));
+        assertEquals(0, countApprovals(claimId));
+        assertEquals(0, decisionOutboxCount(claimId));
+    }
+
+    @Test
+    void caseOneHumanRejectBeforeLateAnalysisCompleted() throws Exception {
+        UUID claimId = uuid("000000000352");
+        seedDecidable(claimId);
+        decide(claimId, "REJECTED", AGENT_A);
+        assertEquals("REJECTED", workflowStatus(claimId));
+
+        Logger logger = (Logger) LoggerFactory.getLogger(ApprovalService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        logger.setLevel(Level.INFO);
+
+        UUID eventId = uuid("0000000003f2");
+        invokeAnalysisCompleted(claimId, eventId, List.of());
+
+        assertEquals("REJECTED", workflowStatus(claimId));
+        assertEquals(0, decisionOutboxCount(claimId));
+        assertEquals(1, countDecisionAudit(claimId));
+        assertConflictAudit(claimId, DecidedBy.AUTO_APPROVAL.userId(), "SYSTEM", "APPROVED");
+        assertEquals(
+                1,
+                appender.list.stream()
+                        .filter(e -> e.getFormattedMessage()
+                                .equals("late analysis ignored claimId="
+                                        + claimId
+                                        + " eventId="
+                                        + eventId
+                                        + " status=REJECTED"))
+                        .count());
+        logger.detachAppender(appender);
+    }
+
+    @Test
+    void nothingReachesApprovedWithoutAnalysisCompleted() {
+        UUID claimId = uuid("000000000353");
+        seedDecidable(claimId);
+        assertEquals("ANALYSIS_PENDING", workflowStatus(claimId));
+        assertEquals(0, countApprovals(claimId));
+        assertEquals(0, decisionOutboxCount(claimId));
+    }
+
+    @RepeatedTest(20)
+    void caseTwoRaceHumanWinsAutoWritesConflict(RepetitionInfo repetition) throws Exception {
+        runCaseTwoRaceIteration(true, repetition.getCurrentRepetition());
+    }
+
+    @RepeatedTest(20)
+    void caseTwoRaceAutoWinsHumanWritesConflict(RepetitionInfo repetition) throws Exception {
+        runCaseTwoRaceIteration(false, repetition.getCurrentRepetition());
+    }
+
+    @Test
     void manualDecisionErrorHandlerUsesFixedBackOffAndLogsDrop() {
         FixedBackOff backOff = applicationContext.getBean("manualDecisionBackOff", FixedBackOff.class);
         assertEquals(2000L, backOff.getInterval());
@@ -639,14 +741,73 @@ class ApprovalDecisionIT {
     }
 
     private void seedDecidable(UUID claimId) {
+        seedWorkflow(claimId, "ANALYSIS_PENDING", CLAIMED);
+    }
+
+    private void seedWorkflow(UUID claimId, String status, BigDecimal claimedAmount) {
         jdbcTemplate.update(
                 """
                 INSERT INTO claim_workflow (claim_id, status, policy_number, claimed_amount, updated_at)
-                VALUES (?, 'ANALYSIS_PENDING', ?, ?, now())
+                VALUES (?, ?, ?, ?, now())
                 """,
                 claimId,
+                status,
                 POLICY,
-                CLAIMED);
+                claimedAmount);
+    }
+
+    private void invokeAnalysisCompleted(UUID claimId, UUID eventId, List<String> flags) {
+        ClaimAnalysisCompletedEvent event = new ClaimAnalysisCompletedEvent(eventId, claimId, flags);
+        ConsumerRecord<String, ClaimAnalysisCompletedEvent> record =
+                new ConsumerRecord<>(CLAIM_ANALYSIS_COMPLETED, 0, 0L, claimId.toString(), event);
+        record.headers().add(new RecordHeader("eventId", eventId.toString().getBytes(StandardCharsets.UTF_8)));
+        analysisListener.onAnalysisCompleted(record);
+    }
+
+    private void runCaseTwoRaceIteration(boolean humanWins, int repetition) throws Exception {
+        long claimSuffix = humanWins ? 350L + repetition : 370L + repetition;
+        UUID claimId = uuid(String.format("%012x", claimSuffix));
+        seedDecidable(claimId);
+        latchingDecisionRaceHook.resetForNextRun();
+        UUID analysisEventId = UUID.randomUUID();
+        AtomicReference<Integer> humanStatus = new AtomicReference<>();
+        AtomicReference<Exception> humanError = new AtomicReference<>();
+        Thread human = new Thread(() -> {
+            try {
+                humanStatus.set(decide(claimId, "APPROVED", AGENT_A).statusCode());
+            } catch (Exception exception) {
+                humanError.set(exception);
+            }
+        });
+        Thread auto = new Thread(() -> invokeAnalysisCompleted(claimId, analysisEventId, List.of()));
+        human.start();
+        auto.start();
+        if (!latchingDecisionRaceHook.humanEntered().await(10, java.util.concurrent.TimeUnit.SECONDS)
+                || !latchingDecisionRaceHook.autoEntered().await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+            throw new IllegalStateException("race entered latch timed out");
+        }
+        if (humanWins) {
+            latchingDecisionRaceHook.humanRelease().countDown();
+            human.join(10_000);
+            latchingDecisionRaceHook.autoRelease().countDown();
+            auto.join(10_000);
+            assertEquals(200, humanStatus.get());
+            assertConflictAudit(claimId, DecidedBy.AUTO_APPROVAL.userId(), "SYSTEM", "APPROVED");
+        } else {
+            latchingDecisionRaceHook.autoRelease().countDown();
+            auto.join(10_000);
+            latchingDecisionRaceHook.humanRelease().countDown();
+            human.join(10_000);
+            assertEquals(409, humanStatus.get());
+            assertConflictAudit(claimId, AGENT_A.toString(), "AGENT", "APPROVED");
+        }
+        if (humanError.get() != null) {
+            throw humanError.get();
+        }
+        assertEquals(1, countApprovals(claimId));
+        assertEquals(1, decisionOutboxCount(claimId));
+        assertEquals(1, countDecisionAudit(claimId));
+        assertEquals("APPROVED", workflowStatus(claimId));
     }
 
     private void seedAutoApprovedClaim(UUID claimId, UUID decisionId, UUID outboxEventId) {
