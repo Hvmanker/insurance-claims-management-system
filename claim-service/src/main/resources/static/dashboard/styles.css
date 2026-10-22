@@ -8,7 +8,8 @@
   --navy: #102a43;
   --teal: #087e8b;
   --lime: #61a60e;
-  --amber: #bd7410;
+  --amber: #b45309;
+  --purple: #9333ea;
   --red: #c2413b;
   --blue: #2563aa;
 }
@@ -84,15 +85,15 @@ th { padding: 12px 20px; text-align: left; color: var(--muted); font: 500 10px "
 td { padding: 15px 20px; border-top: 1px solid #edf2f7; font-size: 12px; vertical-align: middle; }
 td.claimant { font-weight: 800; color: var(--ink); } td.claimant span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; font-weight: 500; }
 .money, .date { font-family: "DM Mono", monospace; color: var(--muted); white-space: nowrap; }
-.status-badge { display: inline-flex; min-width: 76px; justify-content: center; padding: 5px 7px; border-radius: 4px; font: 500 10px "DM Mono", monospace; }
+.status-badge { display: inline-flex; min-width: 76px; justify-content: center; padding: 5px 7px; border-radius: 4px; font: 500 10px "DM Mono", monospace; white-space: nowrap; }
 .status-badge.SUBMITTED { background: #e7effd; color: #1e4f9d; }
 .status-badge.ANALYSIS_PENDING { background: #f3e8ff; color: #6b21a8; }
-.status-badge.REVIEW_READY { background: #fff4e5; color: #9a3412; }
+.status-badge.REVIEW_READY { background: #fef9c3; color: #854d0e; }
 .status-badge.APPROVED { background: #def4f4; color: #066973; }
 .status-badge.REJECTED { background: #fce7e5; color: #a8312d; }
-.status-badge.SETTLED { background: #ebf7d9; color: #4d8207; }
-.status-dot.analysis_pending { background: #9333ea; }
-.status-dot.review_ready { background: #ea580c; }
+.status-badge.SETTLED { background: #ebf7d9; color: #3f6212; }
+.status-dot.analysis-pending { background: var(--purple); }
+.status-dot.review-ready { background: var(--amber); }
 .empty-state { margin: 0; padding: 44px 20px; text-align: center; color: var(--muted); font-size: 13px; }
 .submission-panel { padding: 20px; }
 .submission-panel form { display: grid; gap: 15px; margin-top: 20px; }
