@@ -25,7 +25,10 @@ public class ManualClaimDecisionListener {
         this.approvalService = approvalService;
     }
 
-    @KafkaListener(topics = CLAIM_MANUAL_DECISION, groupId = "approval-service-manual-decisions")
+    @KafkaListener(
+            topics = CLAIM_MANUAL_DECISION,
+            groupId = "approval-service-manual-decisions",
+            containerFactory = "manualDecisionKafkaListenerContainerFactory")
     @Transactional
     public void onManualDecision(ManualClaimDecisionEvent event) {
         ApprovalDecision action = event.approved() ? ApprovalDecision.APPROVED : ApprovalDecision.REJECTED;
