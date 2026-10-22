@@ -585,7 +585,18 @@ redis_scan_contains_claim_id() {
 }
 
 log_check_06_redis_scan() {
-  local phase="$1" scan_out line logged=0
+  local phase="$1" claim_id="${2:-}" expected_key scan_out
+  if [[ -n "$claim_id" ]]; then
+    expected_key="$(redis_claim_cache_key_for_id "$claim_id")"
+    scan_out="$(redis_scan_claims_keys)"
+    if grep -qxF "$expected_key" <<<"$scan_out" 2>/dev/null; then
+      log_line "[06] redis-scan ${phase}: ${expected_key} present"
+    else
+      log_line "[06] redis-scan ${phase}: ${expected_key} absent"
+    fi
+    return
+  fi
+  local line logged=0
   scan_out="$(redis_scan_claims_keys)"
   if [[ -z "${scan_out//[$'\n\r\t ']}" ]]; then
     log_line "[06] redis-scan ${phase}: (none)"
@@ -708,6 +719,7 @@ compose_ps_status_report() {
   printf '%s' "${parts[*]+"${parts[*]}"}"
 }
 
+# Long-running services only (one-shot init jobs such as kafka-init are graded separately in P2).
 compose_all_services_running_healthy() {
   local svc state health saw_service=0
   while IFS=$'\t' read -r svc state health; do
@@ -746,6 +758,12 @@ unhealthy_services() {
   local -a parts=()
   while IFS=$'\t' read -r svc state health; do
     [[ -z "$svc" ]] && continue
+    if phase0_is_oneshot_service "$svc"; then
+      continue
+    fi
+    if phase0_service_counts_as_healthy "$svc" "$state" "$health"; then
+      continue
+    fi
     parts+=("${svc}(state=${state},health=${health:-empty})")
   done <<< "$(compose_ps_lines)"
   local IFS=','
@@ -1265,9 +1283,9 @@ check_P3_login_cache_high_value() {
     return
   fi
 
-  log_check_06_redis_scan "before-read"
+  log_check_06_redis_scan "before-read" "$claim_id"
   if redis_scan_contains_claim_id "$claim_id"; then
-    emit_result "$nn" FAIL "$name" "before-read: claims* key for claim already present before AGENT read"
+    emit_result "$nn" FAIL "$name" "before-read: $(redis_claim_cache_key_for_id "$claim_id") already present before AGENT read"
     return
   fi
   code="$(curl_json GET "${BASE_URL}/claims/${claim_id}" "$jar_agent")"
@@ -1275,7 +1293,7 @@ check_P3_login_cache_high_value() {
     emit_result "$nn" FAIL "$name" "AGENT warm-cache GET returned HTTP ${code}"
     return
   fi
-  log_check_06_redis_scan "after-read"
+  log_check_06_redis_scan "after-read" "$claim_id"
   if ! redis_scan_contains_claim_id "$claim_id"; then
     emit_result "$nn" FAIL "$name" "after-read: claims* key for claim missing after AGENT read"
     return
@@ -1312,9 +1330,9 @@ check_P3_login_cache_high_value() {
     emit_result "$nn" FAIL "$name" "AGENT decide returned HTTP ${code}"
     return
   fi
-  log_check_06_redis_scan "after-decide"
+  log_check_06_redis_scan "after-decide" "$claim_id"
   if redis_scan_contains_claim_id "$claim_id"; then
-    emit_result "$nn" FAIL "$name" "after-decide: claims* key still present (scan before AGENT re-read)"
+    emit_result "$nn" FAIL "$name" "after-decide: $(redis_claim_cache_key_for_id "$claim_id") still present (scan before AGENT re-read)"
     return
   fi
   status="$(claim_status "$jar_agent" "$claim_id" || true)"
@@ -1322,9 +1340,9 @@ check_P3_login_cache_high_value() {
     emit_result "$nn" FAIL "$name" "after re-read status=${status:-unknown}, expected APPROVED"
     return
   fi
-  log_check_06_redis_scan "after-reread"
+  log_check_06_redis_scan "after-reread" "$claim_id"
   if ! redis_scan_contains_claim_id "$claim_id"; then
-    emit_result "$nn" FAIL "$name" "after-reread: claims* key missing after AGENT GET"
+    emit_result "$nn" FAIL "$name" "after-reread: $(redis_claim_cache_key_for_id "$claim_id") missing after AGENT GET"
     return
   fi
   emit_result "$nn" PASS "$name" "demo seeder + AGENT login; ${CHECK_06_CLAIM_AMOUNT} stayed SUBMITTED; cache isolation; decide evicted; APPROVED with cache repopulated"

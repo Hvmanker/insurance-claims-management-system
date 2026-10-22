@@ -812,6 +812,28 @@ if ! redis_scan_contains_claim_id "11111111-1111-1111-1111-111111111111"; then
   exit 1
 fi
 
+p3_target_claim=00000000-0000-0000-0000-000000000353
+echo "stub: before-read passes when other claims:: keys exist but target key is absent"
+PHASE0_STUB_REDIS_KEYS=$'claims::00000000-0000-0000-0000-000000000301\nclaims::00000000-0000-0000-0000-000000000302\n'
+if redis_scan_contains_claim_id "$p3_target_claim"; then
+  echo "FAIL: target key should be absent while other claims:: keys exist" >&2
+  exit 1
+fi
+
+echo "stub: before-read fails when target claims::<claimId> key is already present"
+PHASE0_STUB_REDIS_KEYS=$'claims::00000000-0000-0000-0000-000000000301\nclaims::00000000-0000-0000-0000-000000000353\n'
+if ! redis_scan_contains_claim_id "$p3_target_claim"; then
+  echo "FAIL: target key should be detected when present" >&2
+  exit 1
+fi
+
+echo "stub: compose health wait ignores exited kafka-init when long-running services are healthy"
+PHASE0_STUB_PS_LINES=$'kafka-init\texited\npostgres\trunning\thealthy\nclaim-service\trunning\thealthy\n'
+if ! compose_all_services_running_healthy; then
+  echo "FAIL: health wait should ignore kafka-init and see healthy long-running services" >&2
+  exit 1
+fi
+
 echo "stub: P3 runs before-read redis scan before INSURED claim_status on the check-06 claim"
 p3_before_read_line="$(grep -n 'log_check_06_redis_scan "before-read"' "${REPO_ROOT}/scripts/phase0-runtime-check.sh" | head -n1 | cut -d: -f1)"
 p3_insured_status_line="$(grep -n 'status="$(claim_status "$jar_a" "$claim_id"' "${REPO_ROOT}/scripts/phase0-runtime-check.sh" | head -n1 | cut -d: -f1)"
