@@ -37,6 +37,7 @@ class ContractFixturesTest {
 
     private static final List<String> REQUIRED_EVENT_TYPES = List.of(
             "claim.submitted",
+            "claim.analysis.requested",
             "claim.analysis.completed",
             "claim.decided",
             "settlement.simulated");
@@ -69,24 +70,7 @@ class ContractFixturesTest {
                         if (!Files.isDirectory(versionDir)) {
                             return;
                         }
-                        try (Stream<Path> fixtures = Files.list(versionDir)) {
-                            fixtures.filter(path -> path.getFileName().toString().endsWith(".json"))
-                                    .sorted()
-                                    .forEach(fixture -> {
-                                        String fileName = fixture.getFileName().toString();
-                                        if (fileName.startsWith("valid-")) {
-                                            cases.add(new ContractFixtureCase(fixture, eventType, true, null));
-                                        } else if (fileName.startsWith("invalid-")) {
-                                            cases.add(new ContractFixtureCase(
-                                                    fixture,
-                                                    eventType,
-                                                    false,
-                                                    expectedInvalidFixtureKeyword(fileName)));
-                                        }
-                                    });
-                        } catch (IOException exception) {
-                            throw new UncheckedIOException(exception);
-                        }
+                        collectContractFixtures(versionDir, eventType, cases);
                     });
         }
         return cases.stream();
@@ -128,6 +112,15 @@ class ContractFixturesTest {
                 errorsContainKeyword(errors, fixtureCase.expectedErrorKeyword()),
                 () -> "Expected keyword '" + fixtureCase.expectedErrorKeyword() + "' in errors for "
                         + fixtureCase.fixturePath() + ": " + formatErrors(errors));
+    }
+
+    @Test
+    void fixtureDirectoryNotEmpty() throws IOException {
+        long analysisRequestedCases = contractFixtureCases()
+                .filter(caseEntry -> "claim.analysis.requested".equals(caseEntry.eventType()))
+                .count();
+        assertTrue(analysisRequestedCases >= 5,
+                () -> "claim.analysis.requested fixture parameter source must yield at least 5 cases");
     }
 
     @Test
@@ -214,6 +207,57 @@ class ContractFixturesTest {
         assertNotEquals(approvedAmount, paidAmount);
     }
 
+    private static void collectContractFixtures(Path versionDir, String eventType, List<ContractFixtureCase> cases) {
+        try (Stream<Path> fixtures = Files.list(versionDir)) {
+            fixtures.filter(path -> path.getFileName().toString().endsWith(".json"))
+                    .sorted()
+                    .forEach(fixture -> {
+                        String fileName = fixture.getFileName().toString();
+                        if (fileName.startsWith("valid-")) {
+                            cases.add(new ContractFixtureCase(fixture, eventType, true, null));
+                        } else if (fileName.startsWith("invalid-")) {
+                            cases.add(new ContractFixtureCase(
+                                    fixture,
+                                    eventType,
+                                    false,
+                                    expectedInvalidFixtureKeyword(fileName)));
+                        }
+                    });
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+        collectContractFixturesFromSubdir(versionDir.resolve("valid"), eventType, true, cases);
+        collectContractFixturesFromSubdir(versionDir.resolve("invalid"), eventType, false, cases);
+    }
+
+    private static void collectContractFixturesFromSubdir(
+            Path subdir,
+            String eventType,
+            boolean expectValid,
+            List<ContractFixtureCase> cases) {
+        if (!Files.isDirectory(subdir)) {
+            return;
+        }
+        try (Stream<Path> fixtures = Files.list(subdir)) {
+            fixtures.filter(path -> path.getFileName().toString().endsWith(".json"))
+                    .sorted()
+                    .forEach(fixture -> {
+                        String fileName = fixture.getFileName().toString();
+                        if (expectValid) {
+                            cases.add(new ContractFixtureCase(fixture, eventType, true, null));
+                        } else {
+                            cases.add(new ContractFixtureCase(
+                                    fixture,
+                                    eventType,
+                                    false,
+                                    expectedInvalidFixtureKeyword(fileName)));
+                        }
+                    });
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+    }
+
     private static String expectedInvalidFixtureKeyword(String fileName) {
         if (fileName.contains("missing-")) {
             return "required";
@@ -224,6 +268,12 @@ class ContractFixturesTest {
         if (fileName.contains("bad-decision")) {
             return "enum";
         }
+        if (fileName.contains("negative-")) {
+            return "pattern";
+        }
+        if (fileName.contains("not-uuid")) {
+            return "format";
+        }
         throw new IllegalArgumentException("Unmapped invalid fixture name (expected missing-, extra-, or bad-decision): "
                 + fileName);
     }
@@ -232,7 +282,9 @@ class ContractFixturesTest {
         if (!Files.isRegularFile(schemaPath)) {
             throw new IllegalStateException("Missing schema: " + schemaPath);
         }
-        SchemaValidatorsConfig config = SchemaValidatorsConfig.builder().build();
+        SchemaValidatorsConfig config = SchemaValidatorsConfig.builder()
+                .formatAssertionsEnabled(true)
+                .build();
         return SCHEMA_FACTORY.getSchema(SchemaLocation.of(schemaPath.toUri().toString()), config);
     }
 
