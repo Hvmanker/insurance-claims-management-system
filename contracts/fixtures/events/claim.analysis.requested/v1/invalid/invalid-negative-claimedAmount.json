@@ -1,0 +1,13 @@
+{
+  "eventId": "e1000000-0000-4000-8000-000000000004",
+  "eventType": "claim.analysis.requested",
+  "schemaVersion": 1,
+  "aggregateId": "c2000000-0000-4000-8000-000000000004",
+  "occurredAt": "2026-10-01T12:00:00Z",
+  "correlationId": "d3000000-0000-4000-8000-000000000004",
+  "causationId": null,
+  "payload": {
+    "claimId": "c2000000-0000-4000-8000-000000000004",
+    "claimedAmount": "-1.00"
+  }
+}

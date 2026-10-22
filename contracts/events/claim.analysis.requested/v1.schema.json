@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "claim.analysis.requested v1",
+  "allOf": [
+    {
+      "$ref": "../../envelope.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "eventType": {
+          "const": "claim.analysis.requested"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "claimId",
+            "claimedAmount"
+          ],
+          "properties": {
+            "claimId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "claimedAmount": {
+              "$ref": "#/$defs/moneyAmount"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "moneyAmount": {
+      "type": "string",
+      "pattern": "^\\d+(\\.\\d{1,2})?$"
+    }
+  }
+}

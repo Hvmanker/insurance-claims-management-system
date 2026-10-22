@@ -31,7 +31,12 @@ function updateSummary(summary) {
   document.getElementById("submitted-claims").textContent = summary.submittedClaims;
   document.getElementById("settled-claims").textContent = summary.settledClaims;
   document.getElementById("estimated-exposure").textContent = currencyFormatter.format(summary.totalEstimatedAmount);
-  ["submitted", "approved", "rejected", "settled"].forEach(function (status) { document.getElementById(status + "-count").textContent = summary[status + "Claims"]; });
+  document.getElementById("submitted-count").textContent = summary.submittedClaims;
+  document.getElementById("analysis-pending-count").textContent = summary.analysisPendingClaims;
+  document.getElementById("review-ready-count").textContent = summary.reviewReadyClaims;
+  document.getElementById("approved-count").textContent = summary.approvedClaims;
+  document.getElementById("rejected-count").textContent = summary.rejectedClaims;
+  document.getElementById("settled-count").textContent = summary.settledClaims;
 }
 async function refreshPortal() {
   var refresh = document.getElementById("refresh-button"); refresh.disabled = true;
