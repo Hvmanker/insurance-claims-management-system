@@ -19,8 +19,16 @@ class OutboxConcurrentPublisherConfig {
     }
 
     @Bean
-    OutboxPublisher outboxPublisher(JdbcTemplate jdbcTemplate, OutboxMessageSender outboxMessageSender) {
+    LatchBlockingOutboxMessageSender latchBlockingOutboxMessageSender() {
+        return new LatchBlockingOutboxMessageSender();
+    }
+
+    @Bean
+    OutboxPublisher outboxPublisher(
+            JdbcTemplate jdbcTemplate, LatchBlockingOutboxMessageSender latchBlockingOutboxMessageSender) {
         return new OutboxPublisher(
-                jdbcTemplate, outboxMessageSender, OutboxInboxTestSupport.DEFAULT_ADVISORY_LOCK_KEY);
+                jdbcTemplate,
+                latchBlockingOutboxMessageSender,
+                OutboxInboxTestSupport.DEFAULT_ADVISORY_LOCK_KEY);
     }
 }

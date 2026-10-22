@@ -13,6 +13,10 @@ final class LockRecordingJdbcTemplate extends JdbcTemplate {
     private final CountDownLatch releaseWhileLockHeld;
     private final AtomicBoolean releaseTriggered;
 
+    LockRecordingJdbcTemplate(DataSource dataSource, List<Boolean> lockOutcomes) {
+        this(dataSource, lockOutcomes, null, null);
+    }
+
     LockRecordingJdbcTemplate(
             DataSource dataSource,
             List<Boolean> lockOutcomes,
@@ -30,7 +34,10 @@ final class LockRecordingJdbcTemplate extends JdbcTemplate {
         if (sql.contains("pg_try_advisory_xact_lock")) {
             boolean acquired = Boolean.TRUE.equals(result);
             lockOutcomes.add(acquired);
-            if (!acquired && releaseTriggered.compareAndSet(false, true)) {
+            if (!acquired
+                    && releaseWhileLockHeld != null
+                    && releaseTriggered != null
+                    && releaseTriggered.compareAndSet(false, true)) {
                 releaseWhileLockHeld.countDown();
             }
         }

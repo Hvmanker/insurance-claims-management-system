@@ -11,8 +11,8 @@ public final class SyntheticIds {
     }
 
     public static UUID eventId(int index) {
-        if (index < 1 || index > 50) {
-            throw new IllegalArgumentException("event index must be 1..50");
+        if (index < 1 || index > 52) {
+            throw new IllegalArgumentException("event index must be 1..52");
         }
         return UUID.fromString(String.format("00000000-0000-0000-0000-0000000001%02d", index));
     }
