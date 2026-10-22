@@ -666,14 +666,6 @@ PASS_COUNT="$stub_pass_before"
 FAIL_COUNT="$stub_fail_before"
 PHASE0_STUB_CLAIM_SERVICE_LOGS=''
 
-phase0_burst_wait_next_state() {
-  local jar="$1" claim_id="$2" start_epoch="$3" index="$4"
-  if [[ -n "${PHASE0_STUB_BURST_LATE_INDEX:-}" && "$index" == "${PHASE0_STUB_BURST_LATE_INDEX}" ]]; then
-    return 1
-  fi
-  return 0
-}
-
 register_insured() {
   return 0
 }
@@ -689,20 +681,23 @@ claim_id_from_submit() {
 }
 
 claim_status() {
-  printf '%s' "APPROVED"
+  local jar="$1" claim_id="$2"
+  if [[ -n "${PHASE0_STUB_BURST_LATE_INDEX:-}" && "$claim_id" == "burst-claim-$(printf '%02d' "${PHASE0_STUB_BURST_LATE_INDEX}")" ]]; then
+    printf 'SUBMITTED'
+    return 0
+  fi
+  printf 'APPROVED'
 }
 
-phase0_kafka_claim_submitted_partition() {
-  local claim_id="$1"
-  if [[ "$claim_id" =~ -([0-9]+)$ ]]; then
-    printf '%s' "$(( (10#${BASH_REMATCH[1]} - 1) % 3 ))"
-  else
-    printf '0'
+phase0_burst_deadline_elapsed() {
+  if [[ -n "${PHASE0_STUB_BURST_INSTANT_DEADLINE:-}" ]]; then
+    return 0
   fi
+  return 1
 }
 
 echo "stub: startup burst check passes when all claims reach next state in time"
-unset PHASE0_STUB_BURST_LATE_INDEX
+unset PHASE0_STUB_BURST_LATE_INDEX PHASE0_STUB_BURST_INSTANT_DEADLINE
 stub_pass_before="$PASS_COUNT"
 stub_fail_before="$FAIL_COUNT"
 check_16_startup_kafka_burst "16" "stub burst pass" || true
@@ -715,6 +710,7 @@ FAIL_COUNT="$stub_fail_before"
 
 echo "stub: startup burst check fails when one claim is late at 60s"
 export PHASE0_STUB_BURST_LATE_INDEX=3
+export PHASE0_STUB_BURST_INSTANT_DEADLINE=1
 stub_pass_before="$PASS_COUNT"
 stub_fail_before="$FAIL_COUNT"
 check_16_startup_kafka_burst "16" "stub burst late" || true
@@ -724,6 +720,6 @@ if [[ "$FAIL_COUNT" -ne $((stub_fail_before + 1)) ]]; then
 fi
 PASS_COUNT="$stub_pass_before"
 FAIL_COUNT="$stub_fail_before"
-unset PHASE0_STUB_BURST_LATE_INDEX
+unset PHASE0_STUB_BURST_LATE_INDEX PHASE0_STUB_BURST_INSTANT_DEADLINE
 
 echo "stub: all OK"
