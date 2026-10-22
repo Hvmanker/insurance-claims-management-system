@@ -37,6 +37,7 @@ PHASE0_CURL_BODY=""
 PHASE0_LAST_HTTP_CODE=""
 PHASE0_REGISTER_HTTP_CODE=""
 COMPOSE_PS_STATUS_REPORT=""
+PHASE0_KAFKA_INIT_FAIL_REASON=""
 HTTP_WAIT_STATUS_REPORT=""
 PHASE0_ACTIVE_COMPOSE_PROJECT=""
 declare -a PHASE0_STOPPED_PROJECTS=()
@@ -653,15 +654,46 @@ phase0_is_oneshot_service() {
   return 1
 }
 
+phase0_kafka_init_container_id() {
+  local svc cid
+  while IFS=$'\t' read -r svc cid; do
+    [[ -z "$svc" ]] && continue
+    if [[ "$svc" == "kafka-init" ]]; then
+      printf '%s' "$cid"
+      return 0
+    fi
+  done <<< "$(compose ps -a --format '{{.Service}}\t{{.ID}}' 2>/dev/null || true)"
+  return 1
+}
+
+phase0_docker_inspect_template() {
+  local container_id="$1" template="$2"
+  docker inspect -f "$template" "$container_id" 2>/dev/null || true
+}
+
+phase0_kafka_init_graded_ok() {
+  local container_id status exit_code
+  PHASE0_KAFKA_INIT_FAIL_REASON=""
+  container_id="$(phase0_kafka_init_container_id)" || container_id=""
+  if [[ -z "$container_id" ]]; then
+    PHASE0_KAFKA_INIT_FAIL_REASON="kafka-init container missing in compose project ${COMPOSE_PROJECT:-<unset>}"
+    return 1
+  fi
+  status="$(phase0_docker_inspect_template "$container_id" '{{.State.Status}}')"
+  exit_code="$(phase0_docker_inspect_template "$container_id" '{{.State.ExitCode}}')"
+  if [[ "$status" != "exited" ]]; then
+    PHASE0_KAFKA_INIT_FAIL_REASON="kafka-init docker inspect State.Status=${status:-<empty>}, expected exited"
+    return 1
+  fi
+  if [[ "$exit_code" != "0" ]]; then
+    PHASE0_KAFKA_INIT_FAIL_REASON="kafka-init docker inspect State.ExitCode=${exit_code:-<empty>}, expected 0"
+    return 1
+  fi
+  return 0
+}
+
 phase0_service_counts_as_healthy() {
   local svc="$1" state="$2" health="$3"
-  local state_lc exit_code
-  if phase0_is_oneshot_service "$svc"; then
-    state_lc="$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')"
-    exit_code="$(phase0_compose_service_exit_code "$svc")"
-    [[ "$state_lc" == "exited" && "$exit_code" == "0" ]]
-    return
-  fi
   [[ "$state" == "running" && "$health" == "healthy" ]]
 }
 
@@ -680,6 +712,9 @@ compose_all_services_running_healthy() {
   local svc state health saw_service=0
   while IFS=$'\t' read -r svc state health; do
     [[ -z "$svc" ]] && continue
+    if phase0_is_oneshot_service "$svc"; then
+      continue
+    fi
     saw_service=1
     if ! phase0_service_counts_as_healthy "$svc" "$state" "$health"; then
       return 1
@@ -689,20 +724,17 @@ compose_all_services_running_healthy() {
 }
 
 services_not_fully_healthy_list() {
-  local svc state health exit_code state_lc
+  local svc state health
   local -a parts=()
   while IFS=$'\t' read -r svc state health; do
     [[ -z "$svc" ]] && continue
+    if phase0_is_oneshot_service "$svc"; then
+      continue
+    fi
     if phase0_service_counts_as_healthy "$svc" "$state" "$health"; then
       continue
     fi
-    if phase0_is_oneshot_service "$svc"; then
-      exit_code="$(phase0_compose_service_exit_code "$svc")"
-      state_lc="$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')"
-      parts+=("${svc}(state=${state_lc:-empty},exit=${exit_code:-empty})")
-    else
-      parts+=("${svc}(state=${state},health=${health:-empty})")
-    fi
+    parts+=("${svc}(state=${state},health=${health:-empty})")
   done <<< "$(compose_ps_lines)"
   local IFS=','
   printf '%s' "${parts[*]+"${parts[*]}"}"
@@ -1076,8 +1108,13 @@ check_P2_stack_healthy_locked_topics() {
   local not_healthy published host_ports fail_reasons=()
   local entry svc port mapping host_port
   local expected actual flyway_count url readme_code redis_out
-  local init_state init_exit init_state_lc claim_logs topics_ok=1 broker_ok=1 init_ok=1 logs_ok=1
+  local claim_logs topics_ok=1 broker_ok=1 logs_ok=1
   local kafka_config_output
+
+  if ! phase0_kafka_init_graded_ok; then
+    emit_result "$nn" FAIL "$name" "${PHASE0_KAFKA_INIT_FAIL_REASON}"
+    return
+  fi
 
   not_healthy="$(services_not_fully_healthy_list)"
   if [[ -n "$not_healthy" ]]; then
@@ -1164,23 +1201,15 @@ check_P2_stack_healthy_locked_topics() {
     broker_ok=0
   fi
 
-  init_state="$(compose ps -a kafka-init --format '{{.State}}' 2>/dev/null | head -n1 || true)"
-  init_exit="$(compose ps -a kafka-init --format '{{.ExitCode}}' 2>/dev/null | head -n1 || true)"
-  init_state_lc="$(printf '%s' "$init_state" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$init_state_lc" != "exited" || "$init_exit" != "0" ]]; then
-    init_ok=0
-    log_line "kafka-init state=${init_state:-<missing>} exit=${init_exit:-<missing>}"
-  fi
-
   claim_logs="$(claim_service_compose_logs)"
   if grep -q 'different partition count' <<<"$claim_logs" 2>/dev/null; then
     logs_ok=0
   fi
 
-  if [[ "$topics_ok" -eq 1 && "$broker_ok" -eq 1 && "$init_ok" -eq 1 && "$logs_ok" -eq 1 ]]; then
-    emit_result "$nn" PASS "$name" "healthy stack; ports locked to 8081; README 200; redis NOAUTH; flyway rows=${flyway_count}; topics match kafka/topics.txt; auto.create.topics.enable=false; kafka-init Exited (0); no partition-count warnings"
+  if [[ "$topics_ok" -eq 1 && "$broker_ok" -eq 1 && "$logs_ok" -eq 1 ]]; then
+    emit_result "$nn" PASS "$name" "healthy stack; ports locked to 8081; README 200; redis NOAUTH; flyway rows=${flyway_count}; topics match kafka/topics.txt; auto.create.topics.enable=false; kafka-init docker inspect exited(0); no partition-count warnings"
   else
-    emit_result "$nn" FAIL "$name" "topics_ok=${topics_ok} broker_ok=${broker_ok} kafka_init_ok=${init_ok} claim_logs_ok=${logs_ok}"
+    emit_result "$nn" FAIL "$name" "topics_ok=${topics_ok} broker_ok=${broker_ok} claim_logs_ok=${logs_ok}"
   fi
 }
 

@@ -575,6 +575,12 @@ compose() {
     printf '1\n'
     return 0
   fi
+  if [[ "${1:-}" == "ps" && "${2:-}" == "-a" && "${3:-}" == "--format" && "${4:-}" == '{{.Service}}\t{{.ID}}' ]]; then
+    if [[ -n "${PHASE0_STUB_KAFKA_INIT_CID:-}" ]]; then
+      printf 'kafka-init\t%s\n' "${PHASE0_STUB_KAFKA_INIT_CID}"
+    fi
+    return 0
+  fi
   if [[ "${1:-}" == "ps" && "${2:-}" == "-a" && "${3:-}" == "kafka-init" ]]; then
     if [[ "${4:-}" == "--format" && "${5:-}" == "{{.State}}" ]]; then
       phase0_stub_compose_ps_kafka_init | head -n1
@@ -598,8 +604,62 @@ phase0_stub_curl_http_code() {
 }
 curl_http_code() { phase0_stub_curl_http_code "$1"; }
 
+phase0_docker_inspect_template() {
+  local container_id="$1" template="$2"
+  if [[ "$template" == '{{.State.Status}}' ]]; then
+    printf '%s' "${PHASE0_STUB_KAFKA_INIT_INSPECT_STATUS:-exited}"
+    return 0
+  fi
+  if [[ "$template" == '{{.State.ExitCode}}' ]]; then
+    printf '%s' "${PHASE0_STUB_KAFKA_INIT_INSPECT_EXIT:-0}"
+    return 0
+  fi
+  printf ''
+}
+
 export POSTGRES_USER=postgres
 export POSTGRES_DB=insurance
+
+echo "stub: kafka-init docker inspect exited 0 passes P2 grading"
+PHASE0_STUB_KAFKA_INIT_CID=cid-kafka-init-ok
+PHASE0_STUB_KAFKA_INIT_INSPECT_STATUS=exited
+PHASE0_STUB_KAFKA_INIT_INSPECT_EXIT=0
+if ! phase0_kafka_init_graded_ok; then
+  echo "FAIL: kafka-init exited 0 should pass inspect grading: ${PHASE0_KAFKA_INIT_FAIL_REASON}" >&2
+  exit 1
+fi
+
+echo "stub: kafka-init docker inspect exited 1 fails P2 grading"
+PHASE0_STUB_KAFKA_INIT_INSPECT_EXIT=1
+if phase0_kafka_init_graded_ok; then
+  echo "FAIL: kafka-init exit 1 should fail inspect grading" >&2
+  exit 1
+fi
+if [[ "${PHASE0_KAFKA_INIT_FAIL_REASON}" != *"ExitCode=1"* ]]; then
+  echo "FAIL: expected ExitCode=1 in reason, got: ${PHASE0_KAFKA_INIT_FAIL_REASON}" >&2
+  exit 1
+fi
+
+echo "stub: kafka-init missing container fails P2 grading"
+unset PHASE0_STUB_KAFKA_INIT_CID
+if phase0_kafka_init_graded_ok; then
+  echo "FAIL: missing kafka-init container should fail inspect grading" >&2
+  exit 1
+fi
+if [[ "${PHASE0_KAFKA_INIT_FAIL_REASON}" != *"missing"* ]]; then
+  echo "FAIL: expected missing-container reason, got: ${PHASE0_KAFKA_INIT_FAIL_REASON}" >&2
+  exit 1
+fi
+PHASE0_STUB_KAFKA_INIT_CID=cid-kafka-init-ok
+PHASE0_STUB_KAFKA_INIT_INSPECT_EXIT=0
+
+echo "stub: phase0-runtime-check.sh has no DEL/FLUSH cache purge commands"
+if rg -n 'DEL |FLUSH' "${REPO_ROOT}/scripts/phase0-runtime-check.sh" >/tmp/phase0-rg-del-flush.txt 2>/dev/null; then
+  cat /tmp/phase0-rg-del-flush.txt
+  echo "FAIL: DEL/FLUSH must not appear in phase0-runtime-check.sh" >&2
+  exit 1
+fi
+echo "stub: rg -n 'DEL |FLUSH' scripts/phase0-runtime-check.sh produced no matches"
 
 echo "stub: kafka topic pre-create check passes with matching topic list and broker config"
 PHASE0_STUB_KAFKA_LIST=(
@@ -613,9 +673,10 @@ PHASE0_STUB_KAFKA_LIST=(
   claim.submitted
 )
 PHASE0_STUB_KAFKA_CONFIGS_OUTPUT='auto.create.topics.enable=false	'
-PHASE0_STUB_KAFKA_INIT_STATE=exited
-PHASE0_STUB_KAFKA_INIT_EXIT=0
-PHASE0_STUB_PS_LINES=$'postgres\trunning\thealthy\nkafka-init\texited\n'
+PHASE0_STUB_KAFKA_INIT_CID=cid-kafka-init-p2
+PHASE0_STUB_KAFKA_INIT_INSPECT_STATUS=exited
+PHASE0_STUB_KAFKA_INIT_INSPECT_EXIT=0
+PHASE0_STUB_PS_LINES=$'postgres\trunning\thealthy\n'
 PHASE0_STUB_CLAIM_SERVICE_LOGS='claim-service started'
 stub_pass_before="$PASS_COUNT"
 stub_fail_before="$FAIL_COUNT"
@@ -718,21 +779,12 @@ PASS_COUNT="$stub_pass_before"
 FAIL_COUNT="$stub_fail_before"
 unset PHASE0_STUB_BURST_LATE_INDEX PHASE0_STUB_BURST_INSTANT_DEADLINE
 
-echo "stub: one-shot service exited 0 is not listed as unhealthy"
+echo "stub: one-shot services are omitted from compose health list"
 PHASE0_STUB_PS_LINES=$'postgres\trunning\thealthy\nkafka-init\texited\n'
-PHASE0_STUB_KAFKA_INIT_EXIT=0
 if [[ -n "$(services_not_fully_healthy_list)" ]]; then
-  echo "FAIL: kafka-init exited 0 should pass health list, got: $(services_not_fully_healthy_list)" >&2
+  echo "FAIL: kafka-init should be omitted from health list, got: $(services_not_fully_healthy_list)" >&2
   exit 1
 fi
-
-echo "stub: one-shot service exited non-zero is listed as unhealthy"
-PHASE0_STUB_KAFKA_INIT_EXIT=1
-if ! grep -q 'kafka-init' <<<"$(services_not_fully_healthy_list)"; then
-  echo "FAIL: kafka-init exit 1 should fail health list" >&2
-  exit 1
-fi
-PHASE0_STUB_KAFKA_INIT_EXIT=0
 
 echo "stub: running but unhealthy long-running service fails health list"
 PHASE0_STUB_PS_LINES=$'claim-service\trunning\tunhealthy'
