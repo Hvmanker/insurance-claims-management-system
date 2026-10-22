@@ -1,6 +1,8 @@
 package com.hvmanker.insurance.approval.integration;
 
 import com.hvmanker.insurance.approval.ApprovalServiceApplication;
+import com.hvmanker.insurance.approval.domain.ClaimWorkflowStore;
+import com.hvmanker.insurance.approval.domain.WorkflowStatus;
 import com.hvmanker.insurance.approval.messaging.AnalysisListener;
 import com.hvmanker.insurance.approval.service.ApprovalService;
 import com.hvmanker.insurance.common.events.ClaimAnalysisCompletedEvent;
@@ -28,7 +30,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.RepetitionInfo;
 import org.junit.jupiter.api.Test;
-import org.springframework.context.annotation.Import;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -37,6 +38,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -67,7 +69,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
@@ -82,12 +86,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doCallRealMethod;
 
 @SpringBootTest(
         classes = ApprovalServiceApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
-@Import(ApprovalDecisionRaceTestConfig.class)
 class ApprovalDecisionIT {
     private static final String TOKEN = "test-internal-token-1A3";
     private static final String AUTH = "Bearer " + TOKEN;
@@ -136,8 +142,13 @@ class ApprovalDecisionIT {
     @Autowired
     AnalysisListener analysisListener;
 
-    @Autowired
-    LatchingDecisionRaceHook latchingDecisionRaceHook;
+    @SpyBean
+    ClaimWorkflowStore claimWorkflowStore;
+
+    private CountDownLatch humanEntered = new CountDownLatch(1);
+    private CountDownLatch humanRelease = new CountDownLatch(1);
+    private CountDownLatch autoEntered = new CountDownLatch(1);
+    private CountDownLatch autoRelease = new CountDownLatch(1);
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
     private final ObjectMapper objectMapper = new ObjectMapper()
@@ -768,7 +779,8 @@ class ApprovalDecisionIT {
         long claimSuffix = humanWins ? 350L + repetition : 370L + repetition;
         UUID claimId = uuid(String.format("%012x", claimSuffix));
         seedDecidable(claimId);
-        latchingDecisionRaceHook.resetForNextRun();
+        resetRaceLatches();
+        installRaceStoreLatches();
         UUID analysisEventId = UUID.randomUUID();
         AtomicReference<Integer> humanStatus = new AtomicReference<>();
         AtomicReference<Exception> humanError = new AtomicReference<>();
@@ -782,21 +794,20 @@ class ApprovalDecisionIT {
         Thread auto = new Thread(() -> invokeAnalysisCompleted(claimId, analysisEventId, List.of()));
         human.start();
         auto.start();
-        if (!latchingDecisionRaceHook.humanEntered().await(10, java.util.concurrent.TimeUnit.SECONDS)
-                || !latchingDecisionRaceHook.autoEntered().await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+        if (!humanEntered.await(10, TimeUnit.SECONDS) || !autoEntered.await(10, TimeUnit.SECONDS)) {
             throw new IllegalStateException("race entered latch timed out");
         }
         if (humanWins) {
-            latchingDecisionRaceHook.humanRelease().countDown();
+            humanRelease.countDown();
             human.join(10_000);
-            latchingDecisionRaceHook.autoRelease().countDown();
+            autoRelease.countDown();
             auto.join(10_000);
             assertEquals(200, humanStatus.get());
             assertConflictAudit(claimId, DecidedBy.AUTO_APPROVAL.userId(), "SYSTEM", "APPROVED");
         } else {
-            latchingDecisionRaceHook.autoRelease().countDown();
+            autoRelease.countDown();
             auto.join(10_000);
-            latchingDecisionRaceHook.humanRelease().countDown();
+            humanRelease.countDown();
             human.join(10_000);
             assertEquals(409, humanStatus.get());
             assertConflictAudit(claimId, AGENT_A.toString(), "AGENT", "APPROVED");
@@ -808,6 +819,39 @@ class ApprovalDecisionIT {
         assertEquals(1, decisionOutboxCount(claimId));
         assertEquals(1, countDecisionAudit(claimId));
         assertEquals("APPROVED", workflowStatus(claimId));
+        restoreRealWorkflowStore();
+    }
+
+    private void resetRaceLatches() {
+        humanEntered = new CountDownLatch(1);
+        humanRelease = new CountDownLatch(1);
+        autoEntered = new CountDownLatch(1);
+        autoRelease = new CountDownLatch(1);
+    }
+
+    private void installRaceStoreLatches() throws Exception {
+        doAnswer(invocation -> {
+            humanEntered.countDown();
+            if (!humanRelease.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("human release latch timed out");
+            }
+            return invocation.callRealMethod();
+        }).when(claimWorkflowStore).transitionDecidedStatus(any(), any());
+        doAnswer(invocation -> {
+            String newStatus = invocation.getArgument(1);
+            if (WorkflowStatus.APPROVED.equals(newStatus)) {
+                autoEntered.countDown();
+                if (!autoRelease.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("auto release latch timed out");
+                }
+            }
+            return invocation.callRealMethod();
+        }).when(claimWorkflowStore).transitionFromAnalysisPending(any(), any());
+    }
+
+    private void restoreRealWorkflowStore() {
+        doCallRealMethod().when(claimWorkflowStore).transitionDecidedStatus(any(), any());
+        doCallRealMethod().when(claimWorkflowStore).transitionFromAnalysisPending(any(), any());
     }
 
     private void seedAutoApprovedClaim(UUID claimId, UUID decisionId, UUID outboxEventId) {
