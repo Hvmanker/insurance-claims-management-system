@@ -124,7 +124,11 @@ class WorkflowNotificationListenerLogLeakTest {
     @Test
     void leakDetectorCatchesCanary() {
         listenerLogger.info(DECIDED_BY_LEAK_CANARY);
-        assertThat(combinedLogText()).contains(DECIDED_BY_LEAK_CANARY);
+        assertThat(occurrenceCount(DECIDED_BY_LEAK_CANARY)).isEqualTo(1);
+    }
+
+    private int occurrenceCount(String text) {
+        return (int) combinedLogText().split(text, -1).length - 1;
     }
 
     private void assertNoSensitiveDataInLogs() {
