@@ -40,8 +40,6 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 public class ApprovalService {
     private static final Logger log = LoggerFactory.getLogger(ApprovalService.class);
     private static final String CLAIM_SUBMITTED_CONSUMER_GROUP = "approval-service";
-    private static final String AGENT_ROLE = "AGENT";
-
     private final ClaimApprovalRepository approvalRepository;
     private final ClaimWorkflowRepository claimWorkflowRepository;
     private final ClaimWorkflowStore claimWorkflowStore;
@@ -105,6 +103,9 @@ public class ApprovalService {
                 targetStatus,
                 List.of(WorkflowStatus.ANALYSIS_PENDING, WorkflowStatus.REVIEW_READY));
         if (updated == 0) {
+            if (!claimWorkflowStore.existsByClaimId(claimId)) {
+                throw new ClaimWorkflowNotFoundException();
+            }
             decisionConflictRecorder.recordHumanLostConflict(
                     claimId,
                     decidedBy.userId(),
@@ -144,8 +145,8 @@ public class ApprovalService {
                             decisionId,
                             claimId,
                             workflow.getPolicyNumber(),
-                            workflow.getClaimedAmount(),
                             resolvedApprovedAmount,
+                            workflow.getClaimedAmount(),
                             decidedBy,
                             null,
                             decidedAt));
@@ -167,8 +168,17 @@ public class ApprovalService {
 
     @Transactional
     public void recordHumanDecision(UUID claimId, InternalDecisionRequest request) {
-        ApprovalDecision action = request.approved() ? ApprovalDecision.APPROVED : ApprovalDecision.REJECTED;
-        decide(claimId, action, new DecidedBy(request.userId(), AGENT_ROLE), null, request.reason());
+        ClaimWorkflow workflow = claimWorkflowRepository.findById(claimId).orElse(null);
+        if (workflow != null) {
+            InternalDecisionValidator.validate(request, workflow.getClaimedAmount());
+        }
+        ApprovalDecision action = InternalDecisionValidator.parseAction(request.action());
+        decide(
+                claimId,
+                action,
+                new DecidedBy(request.decidedBy().userId(), request.decidedBy().role()),
+                request.approvedAmount(),
+                request.reason());
     }
 
     @Transactional(readOnly = true)
