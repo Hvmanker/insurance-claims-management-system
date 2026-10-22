@@ -9,8 +9,7 @@ function roleDisplayName(role) { return role === "BROKER" ? "Agent" : role; }
 function isLegacyAgentWorkspace(role) { return role === "AGENT"; }
 function api(url, options) { return fetch(url, options).then(async function (response) { if (!response.ok) { var body = await response.json().catch(function () { return {}; }); throw new Error(body.detail || body.message || "Request could not be completed."); } return response.status === 204 ? null : response.json(); }); }
 function cell(text, className) { var element = document.createElement("td"); element.textContent = text; if (className) element.className = className; return element; }
-var STATUS_BADGE_LABELS = { REVIEW_READY: "READY FOR REVIEW" };
-function statusBadgeLabel(status) { return STATUS_BADGE_LABELS[status] || status.replace(/_/g, " "); }
+function statusBadgeLabel(status) { return status === "REVIEW_READY" ? "READY FOR REVIEW" : status.replace(/_/g, " "); }
 
 function renderClaims() {
   var query = document.getElementById("claim-search").value.trim().toLowerCase();
