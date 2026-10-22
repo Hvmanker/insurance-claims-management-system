@@ -11,6 +11,8 @@ import java.util.UUID;
  * transaction before handling an event. When it returns {@code false}, the event was already processed
  * and the caller should skip handling and log:
  * {@code duplicate event skipped claimId={} eventId={}}.
+ * The insert runs in the handler's surrounding transaction ({@code MANDATORY} propagation), so a
+ * handler failure rolls the dedupe row back as well.
  */
 public class InboxGuard {
 

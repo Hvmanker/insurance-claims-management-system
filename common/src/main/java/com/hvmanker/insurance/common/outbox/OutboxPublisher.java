@@ -19,6 +19,12 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+/**
+ * Polls unsent outbox rows and publishes them to Kafka. The message key is {@code aggregate_id}
+ * (the claim id) as a string so all events for a claim stay ordered on one partition. The only
+ * record header is {@code eventId}. {@code sent_at} is set only after the broker acknowledges
+ * the send ({@code Future#get} completes successfully).
+ */
 public class OutboxPublisher {
 
     private static final String EVENT_ID_HEADER = "eventId";
@@ -82,9 +88,10 @@ public class OutboxPublisher {
 
     private void sendAndMarkSent(OutboxRecord record)
             throws InterruptedException, ExecutionException, TimeoutException {
+        String claimIdKey = record.aggregateId().toString();
         ProducerRecord<String, String> message = new ProducerRecord<>(
                 record.topic(),
-                record.aggregateId().toString(),
+                claimIdKey,
                 record.payload());
         message.headers().add(new RecordHeader(
                 EVENT_ID_HEADER,

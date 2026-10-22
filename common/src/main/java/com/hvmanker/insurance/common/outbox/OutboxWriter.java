@@ -6,6 +6,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
 
+/**
+ * Appends outbox rows in the caller's surrounding transaction ({@code MANDATORY} propagation).
+ * If that transaction rolls back, no outbox row is persisted.
+ */
 public class OutboxWriter {
 
     private final JdbcTemplate jdbcTemplate;
