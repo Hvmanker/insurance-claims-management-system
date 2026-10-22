@@ -4,7 +4,6 @@ import com.hvmanker.insurance.approval.domain.ApprovalDecision;
 import com.hvmanker.insurance.approval.web.InternalDecisionRequest;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 
 public final class InternalDecisionValidator {
     private static final String AGENT_ROLE = "AGENT";
@@ -55,8 +54,7 @@ public final class InternalDecisionValidator {
         if (approvedAmount.scale() > 2) {
             throw new InvalidDecisionRequestException();
         }
-        BigDecimal normalized = approvedAmount.setScale(2, RoundingMode.UNNECESSARY);
-        if (normalized.compareTo(claimedAmount) > 0) {
+        if (approvedAmount.compareTo(claimedAmount) > 0) {
             throw new InvalidDecisionRequestException();
         }
     }

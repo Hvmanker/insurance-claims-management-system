@@ -10,7 +10,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
@@ -28,7 +27,6 @@ public class ClaimSubmittedListener {
     }
 
     @KafkaListener(topics = CLAIM_SUBMITTED, groupId = "approval-service")
-    @Transactional
     public void onClaimSubmitted(ConsumerRecord<String, ClaimSubmittedEvent> record) {
         ClaimSubmittedEvent event = record.value();
         UUID eventId = resolveEventId(record, event);
