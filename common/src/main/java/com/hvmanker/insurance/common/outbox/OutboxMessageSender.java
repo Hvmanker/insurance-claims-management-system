@@ -3,8 +3,6 @@ package com.hvmanker.insurance.common.outbox;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
-
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.ExecutionException;
@@ -28,11 +26,7 @@ public interface OutboxMessageSender {
             message.headers().add(new RecordHeader(
                     EVENT_ID_HEADER,
                     record.eventId().toString().getBytes(StandardCharsets.UTF_8)));
-            SendResult<String, String> result = kafkaTemplate.send(message)
-                    .get(sendTimeout.toMillis(), TimeUnit.MILLISECONDS);
-            if (result == null) {
-                throw new ExecutionException(new IllegalStateException("Kafka send returned null"));
-            }
+            kafkaTemplate.send(message).get(sendTimeout.toMillis(), TimeUnit.MILLISECONDS);
         };
     }
 }
