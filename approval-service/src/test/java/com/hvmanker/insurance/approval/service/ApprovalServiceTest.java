@@ -85,6 +85,7 @@ class ApprovalServiceTest {
                 outboxWriter,
                 objectMapper,
                 decisionAuditRepository,
+                new BigDecimal("10000.00"),
                 transactionTemplate);
         Logger logger = (Logger) LoggerFactory.getLogger(ApprovalService.class);
         logAppender = new ListAppender<>();
