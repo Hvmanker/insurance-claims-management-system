@@ -226,36 +226,6 @@ class ContractFixturesTest {
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
         }
-        collectContractFixturesFromSubdir(versionDir.resolve("valid"), eventType, true, cases);
-        collectContractFixturesFromSubdir(versionDir.resolve("invalid"), eventType, false, cases);
-    }
-
-    private static void collectContractFixturesFromSubdir(
-            Path subdir,
-            String eventType,
-            boolean expectValid,
-            List<ContractFixtureCase> cases) {
-        if (!Files.isDirectory(subdir)) {
-            return;
-        }
-        try (Stream<Path> fixtures = Files.list(subdir)) {
-            fixtures.filter(path -> path.getFileName().toString().endsWith(".json"))
-                    .sorted()
-                    .forEach(fixture -> {
-                        String fileName = fixture.getFileName().toString();
-                        if (expectValid) {
-                            cases.add(new ContractFixtureCase(fixture, eventType, true, null));
-                        } else {
-                            cases.add(new ContractFixtureCase(
-                                    fixture,
-                                    eventType,
-                                    false,
-                                    expectedInvalidFixtureKeyword(fileName)));
-                        }
-                    });
-        } catch (IOException exception) {
-            throw new UncheckedIOException(exception);
-        }
     }
 
     private static String expectedInvalidFixtureKeyword(String fileName) {
@@ -274,8 +244,9 @@ class ContractFixturesTest {
         if (fileName.contains("not-uuid")) {
             return "format";
         }
-        throw new IllegalArgumentException("Unmapped invalid fixture name (expected missing-, extra-, or bad-decision): "
-                + fileName);
+        throw new IllegalArgumentException(
+                "Unmapped invalid fixture name (expected missing-, extra-, bad-decision, negative-, or not-uuid): "
+                        + fileName);
     }
 
     private static JsonSchema loadSchema(Path schemaPath) {
