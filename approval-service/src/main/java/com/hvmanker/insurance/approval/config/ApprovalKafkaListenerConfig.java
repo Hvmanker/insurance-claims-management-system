@@ -11,19 +11,42 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
-import org.springframework.kafka.listener.CommonErrorHandler;
+import org.springframework.kafka.listener.ConsumerRecordRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.util.backoff.FixedBackOff;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 @Configuration
 public class ApprovalKafkaListenerConfig {
     private static final Logger log = LoggerFactory.getLogger(ApprovalKafkaListenerConfig.class);
-    private static final long MANUAL_DECISION_BACKOFF_MS = 2_000L;
-    private static final long MANUAL_DECISION_MAX_ATTEMPTS = 15L;
+
+    @Bean
+    FixedBackOff manualDecisionBackOff() {
+        return new FixedBackOff(2_000L, 14L);
+    }
+
+    @Bean
+    ConsumerRecordRecoverer manualDecisionRecoverer() {
+        return (ConsumerRecord<?, ?> record, Exception exception) -> {
+            if (record == null || !(record.value() instanceof ManualClaimDecisionEvent event)) {
+                return;
+            }
+            log.error("manual decision dropped claimId={} alert=true", event.claimId());
+        };
+    }
+
+    @Bean
+    DefaultErrorHandler manualDecisionErrorHandler(
+            FixedBackOff manualDecisionBackOff,
+            ConsumerRecordRecoverer manualDecisionRecoverer) {
+        DefaultErrorHandler handler = new DefaultErrorHandler(manualDecisionRecoverer, manualDecisionBackOff);
+        handler.addNotRetryableExceptions(ClaimAlreadyDecidedException.class);
+        return handler;
+    }
 
     @Bean
     ConsumerFactory<String, ManualClaimDecisionEvent> manualDecisionConsumerFactory(KafkaProperties kafkaProperties) {
@@ -35,22 +58,12 @@ public class ApprovalKafkaListenerConfig {
 
     @Bean
     ConcurrentKafkaListenerContainerFactory<String, ManualClaimDecisionEvent> manualDecisionKafkaListenerContainerFactory(
-            ConsumerFactory<String, ManualClaimDecisionEvent> manualDecisionConsumerFactory) {
+            ConsumerFactory<String, ManualClaimDecisionEvent> manualDecisionConsumerFactory,
+            DefaultErrorHandler manualDecisionErrorHandler) {
         ConcurrentKafkaListenerContainerFactory<String, ManualClaimDecisionEvent> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(manualDecisionConsumerFactory);
-        factory.setCommonErrorHandler(manualDecisionKafkaErrorHandler());
+        factory.setCommonErrorHandler(manualDecisionErrorHandler);
         return factory;
-    }
-
-    private CommonErrorHandler manualDecisionKafkaErrorHandler() {
-        DefaultErrorHandler handler = new DefaultErrorHandler((ConsumerRecord<?, ?> record, Exception exception) -> {
-            if (record == null || !(record.value() instanceof ManualClaimDecisionEvent event)) {
-                return;
-            }
-            log.error("manual decision dropped claimId={} alert=true", event.claimId());
-        }, new FixedBackOff(MANUAL_DECISION_BACKOFF_MS, MANUAL_DECISION_MAX_ATTEMPTS));
-        handler.addNotRetryableExceptions(ClaimAlreadyDecidedException.class);
-        return handler;
     }
 }
