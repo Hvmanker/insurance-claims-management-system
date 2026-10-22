@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.RepeatedTest;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -71,10 +72,14 @@ class OutboxConcurrentPublishersTest {
         List<Boolean> publisherOneLockOutcomes = new CopyOnWriteArrayList<>();
         List<Boolean> publisherTwoLockOutcomes = new CopyOnWriteArrayList<>();
 
-        JdbcTemplate jdbcOne = new LockRecordingJdbcTemplate(
+        LockRecordingJdbcTemplate jdbcOne = new LockRecordingJdbcTemplate(
                 dataSourceOne, publisherOneLockOutcomes, releaseWhileLockHeld, releaseTriggered);
-        JdbcTemplate jdbcTwo = new LockRecordingJdbcTemplate(
+        LockRecordingJdbcTemplate jdbcTwo = new LockRecordingJdbcTemplate(
                 dataSourceTwo, publisherTwoLockOutcomes, releaseWhileLockHeld, releaseTriggered);
+        TransactionTemplate txOne =
+                new TransactionTemplate(new DataSourceTransactionManager(dataSourceOne));
+        TransactionTemplate txTwo =
+                new TransactionTemplate(new DataSourceTransactionManager(dataSourceTwo));
 
         OutboxMessageSender kafkaSender = OutboxMessageSender.kafka(kafkaTemplate, Duration.ofSeconds(30));
         OutboxMessageSender slowSender = record -> {
@@ -95,8 +100,16 @@ class OutboxConcurrentPublishersTest {
             OutboxPublisher publisherTwo = publisherContextTwo.getBean(OutboxPublisher.class);
 
             ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
-            executor.scheduleAtFixedRate(publisherOne::publishPending, 0, 50, TimeUnit.MILLISECONDS);
-            executor.scheduleAtFixedRate(publisherTwo::publishPending, 0, 50, TimeUnit.MILLISECONDS);
+            executor.scheduleAtFixedRate(
+                    () -> txOne.executeWithoutResult(status -> publisherOne.publishPending()),
+                    0,
+                    50,
+                    TimeUnit.MILLISECONDS);
+            executor.scheduleAtFixedRate(
+                    () -> txTwo.executeWithoutResult(status -> publisherTwo.publishPending()),
+                    0,
+                    50,
+                    TimeUnit.MILLISECONDS);
 
             await().atMost(Duration.ofSeconds(30)).until(() -> jdbcTemplate.queryForObject(
                     "SELECT count(*) FROM outbox WHERE sent_at IS NOT NULL", Integer.class) == 50);
