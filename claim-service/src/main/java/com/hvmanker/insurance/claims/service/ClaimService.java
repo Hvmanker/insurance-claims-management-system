@@ -106,6 +106,8 @@ public class ClaimService {
         return new ClaimDashboardSummary(
                 counts.values().stream().mapToLong(Long::longValue).sum(),
                 counts.get(ClaimStatus.SUBMITTED),
+                counts.get(ClaimStatus.ANALYSIS_PENDING),
+                counts.get(ClaimStatus.REVIEW_READY),
                 counts.get(ClaimStatus.APPROVED),
                 counts.get(ClaimStatus.REJECTED),
                 counts.get(ClaimStatus.SETTLED),
@@ -209,18 +211,22 @@ public class ClaimService {
         claimEventRepository.save(new ClaimEvent(UUID.randomUUID(), claimId, eventType, title, detail, actor, Instant.now()));
     }
 
-    private String statusTitle(ClaimStatus status) {
+    String statusTitle(ClaimStatus status) {
         return switch (status) {
+            case SUBMITTED -> "Claim submitted";
+            case ANALYSIS_PENDING -> "Claim sent for analysis";
+            case REVIEW_READY -> "Claim ready for review";
             case APPROVED -> "Claim approved";
             case REJECTED -> "Claim rejected";
             case SETTLED -> "Claim settled";
-            case SUBMITTED -> "Claim submitted";
         };
     }
 
     public record ClaimDashboardSummary(
             long totalClaims,
             long submittedClaims,
+            long analysisPendingClaims,
+            long reviewReadyClaims,
             long approvedClaims,
             long rejectedClaims,
             long settledClaims,

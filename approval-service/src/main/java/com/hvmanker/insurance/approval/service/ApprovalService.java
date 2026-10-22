@@ -71,20 +71,42 @@ public class ApprovalService {
                 event.approved() ? event.estimatedAmount() : null, decision, event.decisionReason(), event.decidedAt()));
         if (event.approved()) {
             kafkaTemplate.send(CLAIM_APPROVED, event.claimId().toString(), new ClaimApprovedEvent(
-                    event.claimId(), event.policyNumber(), event.estimatedAmount(), event.decidedBy(), event.decidedAt()));
+                    null,
+                    null,
+                    event.claimId(),
+                    event.policyNumber(),
+                    event.estimatedAmount(),
+                    null,
+                    null,
+                    event.decidedBy(),
+                    event.decidedAt()));
             return;
         }
         kafkaTemplate.send(CLAIM_REJECTED, event.claimId().toString(), new ClaimRejectedEvent(
-                event.claimId(), event.policyNumber(), event.decisionReason(), event.decidedAt()));
+                null,
+                null,
+                event.claimId(),
+                event.policyNumber(),
+                event.decisionReason(),
+                null,
+                event.decidedAt()));
     }
 
     private void publishDecision(ClaimSubmittedEvent event, ApprovalDecision decision, BigDecimal approvedAmount, String reason, Instant decidedAt) {
         if (decision == ApprovalDecision.APPROVED) {
             kafkaTemplate.send(CLAIM_APPROVED, event.claimId().toString(), new ClaimApprovedEvent(
-                    event.claimId(), event.policyNumber(), approvedAmount, "system", decidedAt));
+                    null,
+                    null,
+                    event.claimId(),
+                    event.policyNumber(),
+                    approvedAmount,
+                    null,
+                    null,
+                    "system",
+                    decidedAt));
             return;
         }
         kafkaTemplate.send(CLAIM_REJECTED, event.claimId().toString(), new ClaimRejectedEvent(
-                event.claimId(), event.policyNumber(), reason, decidedAt));
+                null, null, event.claimId(), event.policyNumber(), reason, null, decidedAt));
     }
 }

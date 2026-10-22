@@ -55,7 +55,7 @@ Payloads omit document bytes, prompts, and free-form personal data. Document eve
 | `claim.analysis.completed` | analysis worker | approval-service | Extracted facts, confidence, evidence, flags |
 | `claim.decided` | approval-service | claim-service, settlement-service, notifications | Approved, rejected, or more-info decision |
 | `claim.info.provided` | claim-service | approval-service | Insured uploaded documents in response to a more-info request (fixtures in Phase 1A) |
-| `claim.analysis.requested` | approval-service | analysis worker | Approval-service moved the claim back to analysis after more info (fixtures in Phase 1A) |
+| `claim.analysis.requested` | approval-service | analysis worker | Emitted on first submit (Phase 1A) and when approval-service moves the claim back to analysis after more info (fixtures in Phase 1A) |
 | `settlement.simulated` | settlement-service | claim-service, notifications | Simulated settlement record |
 | `<topic>.DLT` | consumer error handler | operator replay command | Failed events with sanitized error metadata |
 

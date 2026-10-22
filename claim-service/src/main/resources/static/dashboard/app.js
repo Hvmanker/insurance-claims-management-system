@@ -9,6 +9,7 @@ function roleDisplayName(role) { return role === "BROKER" ? "Agent" : role; }
 function isLegacyAgentWorkspace(role) { return role === "AGENT"; }
 function api(url, options) { return fetch(url, options).then(async function (response) { if (!response.ok) { var body = await response.json().catch(function () { return {}; }); throw new Error(body.detail || body.message || "Request could not be completed."); } return response.status === 204 ? null : response.json(); }); }
 function cell(text, className) { var element = document.createElement("td"); element.textContent = text; if (className) element.className = className; return element; }
+function statusBadgeLabel(status) { return status === "REVIEW_READY" ? "READY FOR REVIEW" : status.replace(/_/g, " "); }
 
 function renderClaims() {
   var query = document.getElementById("claim-search").value.trim().toLowerCase();
@@ -18,7 +19,7 @@ function renderClaims() {
     var row = document.createElement("tr");
     var primary = cell(isLegacyAgentWorkspace(currentUser.role) ? claim.claimantName : "Claim " + claim.id.slice(0, 8).toUpperCase(), "claimant");
     var reason = cell(claim.claimType + " - " + claim.reason, "reason"); reason.title = claim.description;
-    var status = document.createElement("td"); var badge = document.createElement("span"); badge.className = "status-badge " + claim.status; badge.textContent = claim.status; status.appendChild(badge);
+    var status = document.createElement("td"); var badge = document.createElement("span"); badge.className = "status-badge " + claim.status; badge.textContent = statusBadgeLabel(claim.status); status.appendChild(badge);
     row.append(primary, cell(claim.policyNumber), reason, cell(currencyFormatter.format(claim.estimatedAmount), "money"), status, cell(dateFormatter.format(new Date(claim.submittedAt)), "date"));
     var actions = document.createElement("td"); var viewButton = document.createElement("button"); viewButton.type = "button"; viewButton.className = "icon-button table-icon"; viewButton.setAttribute("aria-label", "Open claim details"); viewButton.title = "Open claim details"; viewButton.innerHTML = '<i data-lucide="file-search"></i>'; viewButton.addEventListener("click", function () { openClaim(claim); }); actions.appendChild(viewButton); if (isLegacyAgentWorkspace(currentUser.role) && claim.status === "SUBMITTED") { ["Approve", "Reject"].forEach(function (decision) { var button = document.createElement("button"); button.type = "button"; button.className = "decision-button " + decision.toLowerCase(); button.textContent = decision; button.addEventListener("click", function () { openDecision(claim, decision === "Approve"); }); actions.appendChild(button); }); } row.appendChild(actions);
     body.appendChild(row);
@@ -31,7 +32,12 @@ function updateSummary(summary) {
   document.getElementById("submitted-claims").textContent = summary.submittedClaims;
   document.getElementById("settled-claims").textContent = summary.settledClaims;
   document.getElementById("estimated-exposure").textContent = currencyFormatter.format(summary.totalEstimatedAmount);
-  ["submitted", "approved", "rejected", "settled"].forEach(function (status) { document.getElementById(status + "-count").textContent = summary[status + "Claims"]; });
+  document.getElementById("submitted-count").textContent = summary.submittedClaims;
+  document.getElementById("analysis-pending-count").textContent = summary.analysisPendingClaims;
+  document.getElementById("review-ready-count").textContent = summary.reviewReadyClaims;
+  document.getElementById("approved-count").textContent = summary.approvedClaims;
+  document.getElementById("rejected-count").textContent = summary.rejectedClaims;
+  document.getElementById("settled-count").textContent = summary.settledClaims;
 }
 async function refreshPortal() {
   var refresh = document.getElementById("refresh-button"); refresh.disabled = true;
