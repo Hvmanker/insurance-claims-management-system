@@ -214,8 +214,8 @@ public class ClaimService {
     String statusTitle(ClaimStatus status) {
         return switch (status) {
             case SUBMITTED -> "Claim submitted";
-            case ANALYSIS_PENDING -> "Analysis pending";
-            case REVIEW_READY -> "Review ready";
+            case ANALYSIS_PENDING -> "Claim sent for analysis";
+            case REVIEW_READY -> "Claim ready for review";
             case APPROVED -> "Claim approved";
             case REJECTED -> "Claim rejected";
             case SETTLED -> "Claim settled";
