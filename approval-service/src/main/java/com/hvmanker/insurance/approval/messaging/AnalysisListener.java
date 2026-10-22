@@ -8,7 +8,6 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
@@ -29,7 +28,6 @@ public class AnalysisListener {
             properties = {
                     "spring.json.value.default.type=com.hvmanker.insurance.common.events.ClaimAnalysisCompletedEvent"
             })
-    @Transactional
     public void onAnalysisCompleted(ConsumerRecord<String, ClaimAnalysisCompletedEvent> record) {
         ClaimAnalysisCompletedEvent event = record.value();
         UUID eventId = resolveEventId(record);

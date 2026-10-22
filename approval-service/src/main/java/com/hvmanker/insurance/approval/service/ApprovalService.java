@@ -115,7 +115,7 @@ public class ApprovalService {
 
         ClaimWorkflow workflow = claimWorkflowRepository.findById(event.claimId()).orElse(null);
         if (workflow == null) {
-            log.warn("analysis.completed for missing workflow claimId={} eventId={}", event.claimId(), eventId);
+            log.warn("event for unknown claim ignored claimId={} eventId={}", event.claimId(), eventId);
             return;
         }
 

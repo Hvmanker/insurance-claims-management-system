@@ -34,18 +34,21 @@ public class RulesOnlyAnalyser {
     private final InboxGuard inboxGuard;
     private final TransactionTemplate transactionTemplate;
     private final long analyserDelayMs;
+    private final boolean enabled;
 
     public RulesOnlyAnalyser(
             OutboxWriter outboxWriter,
             ObjectMapper objectMapper,
             InboxGuard inboxGuard,
             TransactionTemplate transactionTemplate,
-            @Value("${approval.analyser.delay-ms:0}") long analyserDelayMs) {
+            @Value("${approval.analyser.delay-ms:0}") long analyserDelayMs,
+            @Value("${approval.analyser.enabled:true}") boolean enabled) {
         this.outboxWriter = outboxWriter;
         this.objectMapper = objectMapper;
         this.inboxGuard = inboxGuard;
         this.transactionTemplate = transactionTemplate;
         this.analyserDelayMs = analyserDelayMs;
+        this.enabled = enabled;
     }
 
     @KafkaListener(
@@ -56,13 +59,12 @@ public class RulesOnlyAnalyser {
                     "spring.json.value.default.type=com.hvmanker.insurance.common.events.ClaimAnalysisRequestedEvent"
             })
     public void onAnalysisRequested(ConsumerRecord<String, ClaimAnalysisRequestedEvent> record) {
+        if (!enabled) {
+            return;
+        }
         ClaimAnalysisRequestedEvent event = record.value();
         UUID eventId = resolveEventId(record);
         try (EventMdc ignored = EventMdc.open(event.claimId(), eventId)) {
-            if (!inboxGuard.firstTime(ANALYSER_CONSUMER_GROUP, eventId)) {
-                EventMdc.logDuplicateSkipped(log, event.claimId(), eventId);
-                return;
-            }
             if (analyserDelayMs > 0) {
                 try {
                     Thread.sleep(analyserDelayMs);
@@ -71,7 +73,13 @@ public class RulesOnlyAnalyser {
                     throw new IllegalStateException("Interrupted during analyser delay", interrupted);
                 }
             }
-            transactionTemplate.executeWithoutResult(status -> publishAnalysisCompleted(event));
+            transactionTemplate.executeWithoutResult(status -> {
+                if (!inboxGuard.firstTime(ANALYSER_CONSUMER_GROUP, eventId)) {
+                    EventMdc.logDuplicateSkipped(log, event.claimId(), eventId);
+                    return;
+                }
+                publishAnalysisCompleted(event);
+            });
         }
     }
 

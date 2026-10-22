@@ -7,7 +7,6 @@ claims:
 approval:
   analyser:
     delay-ms: ${ANALYSER_DELAY_MS:0}
-    enabled: ${ANALYSER_ENABLED:true}
 
 insurance:
   outbox:

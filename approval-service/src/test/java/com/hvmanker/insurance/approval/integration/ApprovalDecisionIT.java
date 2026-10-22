@@ -3,7 +3,8 @@ package com.hvmanker.insurance.approval.integration;
 import com.hvmanker.insurance.approval.ApprovalServiceApplication;
 import com.hvmanker.insurance.approval.analysis.RulesOnlyAnalyser;
 import com.hvmanker.insurance.approval.domain.ClaimWorkflowStore;
-import com.hvmanker.insurance.approval.domain.WorkflowStatus;
+import com.hvmanker.insurance.common.inbox.InboxGuard;
+import com.hvmanker.insurance.common.outbox.OutboxWriter;
 import com.hvmanker.insurance.approval.messaging.AnalysisListener;
 import com.hvmanker.insurance.approval.service.ApprovalService;
 import com.hvmanker.insurance.common.events.ClaimAnalysisCompletedEvent;
@@ -28,6 +29,7 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.RepeatedTest;
@@ -51,6 +53,7 @@ import org.springframework.kafka.listener.ConsumerRecordRecoverer;
 import org.springframework.kafka.support.serializer.JsonSerializer;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.backoff.FixedBackOff;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -89,9 +92,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doCallRealMethod;
+import static org.mockito.Mockito.reset;
+
+import org.mockito.stubbing.Answer;
 
 @SpringBootTest(
         classes = ApprovalServiceApplication.class,
@@ -103,6 +108,9 @@ class ApprovalDecisionIT {
     private static final String POLICY = "POL-1A3-TEST";
     private static final String REASON = "test reason 1A.3";
     private static final BigDecimal CLAIMED = new BigDecimal("4000.00");
+    private static final BigDecimal HIGH_CLAIMED = new BigDecimal("15000.00");
+    private static final String ANALYSIS_COMPLETED_GROUP = "approval-service-analysis-completed";
+    private static final String RULES_ANALYSER_GROUP = "approval-service-rules-analyser";
 
     private static final UUID AGENT_A = uuid("0000000003a1");
     private static final UUID AGENT_B = uuid("0000000003a2");
@@ -146,10 +154,20 @@ class ApprovalDecisionIT {
     AnalysisListener analysisListener;
 
     @Autowired
-    RulesOnlyAnalyser rulesOnlyAnalyser;
+    OutboxWriter outboxWriter;
+
+    @Autowired
+    InboxGuard inboxGuard;
+
+    @Autowired
+    TransactionTemplate transactionTemplate;
 
     @SpyBean
     ClaimWorkflowStore claimWorkflowStore;
+
+    private Logger approvalServiceLogger;
+    private Level approvalServicePreviousLevel;
+    private ListAppender<ILoggingEvent> approvalServiceAppender;
 
     private CountDownLatch humanEntered = new CountDownLatch(1);
     private CountDownLatch humanRelease = new CountDownLatch(1);
@@ -178,6 +196,22 @@ class ApprovalDecisionIT {
     void truncateTables() {
         jdbcTemplate.execute(
                 "TRUNCATE claim_workflow, claim_approvals, decision_audit, outbox, processed_events RESTART IDENTITY");
+        approvalServiceLogger = (Logger) LoggerFactory.getLogger(ApprovalService.class);
+        approvalServicePreviousLevel = approvalServiceLogger.getLevel();
+        approvalServiceAppender = new ListAppender<>();
+        approvalServiceAppender.start();
+        approvalServiceLogger.addAppender(approvalServiceAppender);
+        approvalServiceLogger.setLevel(Level.ALL);
+    }
+
+    @AfterEach
+    void tearDownSpyAndLogging() {
+        if (approvalServiceAppender != null) {
+            approvalServiceLogger.detachAppender(approvalServiceAppender);
+            approvalServiceLogger.setLevel(approvalServicePreviousLevel);
+            approvalServiceAppender = null;
+        }
+        reset(claimWorkflowStore);
     }
 
     @Test
@@ -617,10 +651,10 @@ class ApprovalDecisionIT {
     }
 
     @Test
-    void analysisCompletedAutoApproves4000WithNoFlags() {
-        UUID claimId = uuid("000000000354");
+    void analysisCompletedAutoApproves4000WithNoFlags() throws Exception {
+        UUID claimId = uuid("0000000003b1");
         seedDecidable(claimId);
-        UUID eventId = uuid("0000000003f0");
+        UUID eventId = uuid("0000000003f1");
         invokeAnalysisCompleted(claimId, eventId, List.of());
 
         assertEquals("APPROVED", workflowStatus(claimId));
@@ -628,66 +662,72 @@ class ApprovalDecisionIT {
         Map<String, Object> approval = approvalSnapshot(claimId);
         assertEquals("AUTO", approval.get("source"));
         assertEquals(DecidedBy.AUTO_APPROVAL.userId(), approval.get("decided_by_user_id"));
-        assertEquals(1, decisionOutboxCount(claimId));
+        assertEquals("SYSTEM", approval.get("decided_by_role"));
+        assertEquals("APPROVED", approval.get("decision"));
+        assertNotNull(approval.get("decision_id"));
+        assertEquals(0, ((BigDecimal) approval.get("approved_amount")).compareTo(CLAIMED));
+        assertEquals(1, countOutboxForAggregate(claimId, CLAIM_APPROVED));
+        assertEquals(0, countOutboxForAggregate(claimId, CLAIM_REJECTED));
+        Map<String, Object> outbox = singleDecisionOutboxRow(claimId);
+        JsonNode payload = objectMapper.readTree(outbox.get("payload").toString());
+        assertEquals(approval.get("decision_id").toString(), payload.get("decisionId").asText());
+        assertEquals(DecidedBy.AUTO_APPROVAL.userId(), payload.get("decidedBy").get("userId").asText());
+        assertEquals("SYSTEM", payload.get("decidedBy").get("role").asText());
+        assertEquals(0, payload.get("approvedAmount").decimalValue().compareTo(CLAIMED));
+        assertEquals(0, payload.get("claimedAmount").decimalValue().compareTo(CLAIMED));
+        assertEquals(outbox.get("event_id").toString(), payload.get("eventId").asText());
         assertEquals(0, countDecisionAudit(claimId));
+        assertEquals(1, processedEventsCount(ANALYSIS_COMPLETED_GROUP, eventId));
+        assertEquals(0, countLateAnalysisIgnoredLines());
     }
 
     @Test
     void analysisCompletedHighAmountRoutesToReviewReadyWithoutDecisionRow() {
-        UUID claimId = uuid("000000000351");
-        seedWorkflow(claimId, "ANALYSIS_PENDING", new BigDecimal("15000.00"));
-        UUID eventId = uuid("0000000003f1");
+        UUID claimId = uuid("0000000003b2");
+        seedWorkflow(claimId, "ANALYSIS_PENDING", HIGH_CLAIMED);
+        UUID eventId = uuid("0000000003f2");
         invokeAnalysisCompleted(claimId, eventId, List.of());
 
         assertEquals("REVIEW_READY", workflowStatus(claimId));
         assertEquals(0, countApprovals(claimId));
         assertEquals(0, decisionOutboxCount(claimId));
+        assertEquals(0, countDecisionAudit(claimId));
+        assertEquals(1, processedEventsCount(ANALYSIS_COMPLETED_GROUP, eventId));
+        assertEquals(0, countLateAnalysisIgnoredLines());
     }
 
     @Test
     void caseOneHumanRejectBeforeLateAnalysisCompleted() throws Exception {
-        UUID claimId = uuid("000000000352");
+        UUID claimId = uuid("0000000003b3");
         seedDecidable(claimId);
-        decide(claimId, "REJECTED", AGENT_A);
+        HttpResponse<String> rejectResponse = decide(claimId, "REJECTED", AGENT_A);
+        assertEquals(200, rejectResponse.statusCode());
         assertEquals("REJECTED", workflowStatus(claimId));
 
-        Logger logger = (Logger) LoggerFactory.getLogger(ApprovalService.class);
-        Level previousLevel = logger.getLevel();
-        ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
-        logger.setLevel(Level.INFO);
+        UUID eventId = uuid("0000000003f3");
+        invokeAnalysisCompleted(claimId, eventId, List.of());
 
-        try {
-            UUID eventId = uuid("0000000003f2");
-            invokeAnalysisCompleted(claimId, eventId, List.of());
-
-            assertEquals("REJECTED", workflowStatus(claimId));
-            assertEquals(1, decisionOutboxCount(claimId));
-            assertEquals(1, countOutboxForAggregate(claimId, CLAIM_REJECTED));
-            assertEquals(0, countOutboxForAggregate(claimId, CLAIM_APPROVED));
-            assertEquals(1, countDecisionAudit(claimId));
-            assertConflictAudit(claimId, DecidedBy.AUTO_APPROVAL.userId(), "SYSTEM", "APPROVED");
-            assertEquals(
-                    1,
-                    appender.list.stream()
-                            .filter(e -> e.getFormattedMessage()
-                                    .equals("late analysis ignored claimId="
-                                            + claimId
-                                            + " eventId="
-                                            + eventId
-                                            + " status=REJECTED"))
-                            .count());
-        } finally {
-            logger.detachAppender(appender);
-            logger.setLevel(previousLevel);
-        }
+        assertEquals("REJECTED", workflowStatus(claimId));
+        assertEquals(1, countApprovals(claimId));
+        Map<String, Object> approval = approvalSnapshot(claimId);
+        assertEquals("HUMAN", approval.get("source"));
+        assertEquals(AGENT_A.toString(), approval.get("decided_by_user_id"));
+        assertEquals("REJECTED", approval.get("decision"));
+        assertEquals(1, countOutboxForAggregate(claimId, CLAIM_REJECTED));
+        assertEquals(0, countOutboxForAggregate(claimId, CLAIM_APPROVED));
+        assertEquals(1, countDecisionAudit(claimId));
+        assertConflictAudit(claimId, DecidedBy.AUTO_APPROVAL.userId(), "SYSTEM", "APPROVED");
+        assertEquals(
+                1,
+                countApprovalServiceMessage(
+                        "late analysis ignored claimId=" + claimId + " eventId=" + eventId + " status=REJECTED"));
+        assertEquals(1, processedEventsCount(ANALYSIS_COMPLETED_GROUP, eventId));
     }
 
     @Test
     void nothingReachesApprovedWithoutAnalysisCompleted() throws Exception {
-        UUID claimId = uuid("000000000353");
-        UUID eventId = uuid("0000000003f3");
+        UUID claimId = uuid("0000000003b4");
+        UUID eventId = uuid("0000000003e4");
         ClaimSubmittedEvent event = new ClaimSubmittedEvent(
                 claimId,
                 POLICY,
@@ -697,39 +737,149 @@ class ApprovalDecisionIT {
                 Instant.parse("2026-07-01T12:01:00Z"));
         publishClaimSubmitted(event, eventId);
 
-        await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> assertEquals(
-                1,
-                jdbcTemplate.queryForObject(
-                        "SELECT count(*) FROM processed_events WHERE consumer_group = ? AND event_id = ?",
-                        Integer.class,
-                        "approval-service",
-                        eventId)));
+        await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> {
+            assertEquals("ANALYSIS_PENDING", workflowStatus(claimId));
+            assertNotNull(jdbcTemplate.queryForObject(
+                    "SELECT sent_at FROM outbox WHERE aggregate_id = ? AND topic = ?",
+                    Object.class,
+                    claimId,
+                    CLAIM_ANALYSIS_REQUESTED));
+        });
+
+        UUID sentinelClaimId = uuid("0000000003b5");
+        seedDecidable(sentinelClaimId);
+        invokeAnalysisCompleted(sentinelClaimId, uuid("0000000003f5"), List.of());
+        assertEquals("APPROVED", workflowStatus(sentinelClaimId));
 
         assertEquals("ANALYSIS_PENDING", workflowStatus(claimId));
         assertEquals(0, countApprovals(claimId));
-        assertEquals(0, decisionOutboxCount(claimId));
-        assertEquals(1, countOutboxForAggregate(claimId, CLAIM_ANALYSIS_REQUESTED));
+        assertEquals(0, countOutboxForAggregate(claimId, CLAIM_APPROVED));
+        assertEquals(0, countDecisionAudit(claimId));
     }
 
     @Test
-    void redeliveredAnalysisRequestedEmitsOneCompletedAndNoConflict() {
-        UUID claimId = uuid("000000000355");
+    void redeliveredAnalysisRequestedEmitsOneCompletedAndNoConflict() throws Exception {
+        UUID claimId = uuid("0000000003b6");
+        UUID requestedEventId = uuid("0000000003e6");
         seedDecidable(claimId);
-        UUID eventId = uuid("0000000003f4");
-        invokeAnalysisRequested(claimId, eventId);
-        invokeAnalysisRequested(claimId, eventId);
+        RulesOnlyAnalyser analyser =
+                new RulesOnlyAnalyser(outboxWriter, objectMapper, inboxGuard, transactionTemplate, 0L, true);
+        ConsumerRecord<String, ClaimAnalysisRequestedEvent> requestedRecord =
+                analysisRequestedRecord(claimId, requestedEventId);
 
-        assertEquals(1, countOutboxForAggregate(claimId, CLAIM_ANALYSIS_COMPLETED));
+        Logger analyserLogger = (Logger) LoggerFactory.getLogger(RulesOnlyAnalyser.class);
+        Level analyserPreviousLevel = analyserLogger.getLevel();
+        ListAppender<ILoggingEvent> analyserAppender = new ListAppender<>();
+        analyserAppender.start();
+        analyserLogger.addAppender(analyserAppender);
+        analyserLogger.setLevel(Level.INFO);
+
+        try {
+            analyser.onAnalysisRequested(requestedRecord);
+            assertEquals(1, processedEventsCount(RULES_ANALYSER_GROUP, requestedEventId));
+            analyser.onAnalysisRequested(requestedRecord);
+
+            assertEquals(1, countOutboxForAggregate(claimId, CLAIM_ANALYSIS_COMPLETED));
+            assertEquals(
+                    1,
+                    analyserAppender.list.stream()
+                            .filter(e -> e.getFormattedMessage()
+                                    .equals("duplicate event skipped claimId="
+                                            + claimId
+                                            + " eventId="
+                                            + requestedEventId))
+                            .count());
+
+            deliverAllAnalysisCompletedOutboxRows(claimId);
+
+            List<Map<String, Object>> completedRows = jdbcTemplate.queryForList(
+                    "SELECT event_id, payload FROM outbox WHERE aggregate_id = ? AND topic = ? ORDER BY id",
+                    claimId,
+                    CLAIM_ANALYSIS_COMPLETED);
+            assertEquals(1, completedRows.size());
+            JsonNode completedPayload = objectMapper.readTree(completedRows.get(0).get("payload").toString());
+            assertEquals(claimId.toString(), completedPayload.get("claimId").asText());
+            assertEquals(completedRows.get(0).get("event_id").toString(), completedPayload.get("eventId").asText());
+            assertTrue(completedPayload.get("flags").isArray());
+            assertEquals(0, completedPayload.get("flags").size());
+
+            assertEquals("APPROVED", workflowStatus(claimId));
+            assertEquals(1, countApprovals(claimId));
+            assertEquals("AUTO", approvalSnapshot(claimId).get("source"));
+            assertEquals(1, countOutboxForAggregate(claimId, CLAIM_APPROVED));
+            assertEquals(0, countDecisionAudit(claimId));
+            assertEquals(0, countLateAnalysisIgnoredLines());
+        } finally {
+            analyserLogger.detachAppender(analyserAppender);
+            analyserLogger.setLevel(analyserPreviousLevel);
+        }
+    }
+
+    @Test
+    void lateAnalysisOnHumanDecidedHighAmountLogsWithoutConflict() throws Exception {
+        UUID claimId = uuid("0000000003b8");
+        seedWorkflow(claimId, "ANALYSIS_PENDING", HIGH_CLAIMED);
+        HttpResponse<String> response = decide(claimId, "APPROVED", AGENT_A);
+        assertEquals(200, response.statusCode());
+
+        UUID eventId = uuid("0000000003f8");
+        invokeAnalysisCompleted(claimId, eventId, List.of());
+
+        assertEquals("APPROVED", workflowStatus(claimId));
+        assertEquals(
+                1,
+                countApprovalServiceMessage(
+                        "late analysis ignored claimId=" + claimId + " eventId=" + eventId + " status=APPROVED"));
+        assertEquals(0, countDecisionAudit(claimId));
+        Map<String, Object> approval = approvalSnapshot(claimId);
+        assertEquals("HUMAN", approval.get("source"));
+        assertEquals(AGENT_A.toString(), approval.get("decided_by_user_id"));
+        assertEquals("AGENT", approval.get("decided_by_role"));
+        assertEquals(1, countOutboxForAggregate(claimId, CLAIM_APPROVED));
+        assertEquals(0, countOutboxForAggregate(claimId, CLAIM_REJECTED));
+        assertEquals(1, processedEventsCount(ANALYSIS_COMPLETED_GROUP, eventId));
+        assertEquals(0, countUnknownClaimIgnoredLines());
+    }
+
+    @Test
+    void analysisCompletedWithFlagRoutesToReviewReady() {
+        UUID claimId = uuid("0000000003b9");
+        seedDecidable(claimId);
+        UUID eventId = uuid("0000000003f9");
+        invokeAnalysisCompleted(claimId, eventId, List.of("TEST_FLAG"));
+
+        assertEquals("REVIEW_READY", workflowStatus(claimId));
         assertEquals(0, countApprovals(claimId));
         assertEquals(0, decisionOutboxCount(claimId));
         assertEquals(0, countDecisionAudit(claimId));
+        assertEquals(1, processedEventsCount(ANALYSIS_COMPLETED_GROUP, eventId));
+        assertEquals(0, countLateAnalysisIgnoredLines());
+    }
+
+    @Test
+    void analysisCompletedForUnknownClaimLogsWarnAndRecordsInbox() {
+        UUID claimId = uuid("0000000003b7");
+        UUID eventId = uuid("0000000003f7");
+        ConsumerRecord<String, ClaimAnalysisCompletedEvent> record = analysisCompletedRecord(claimId, eventId, List.of());
+        analysisListener.onAnalysisCompleted(record);
+        analysisListener.onAnalysisCompleted(record);
+
         assertEquals(
                 1,
-                jdbcTemplate.queryForObject(
-                        "SELECT count(*) FROM processed_events WHERE consumer_group = ? AND event_id = ?",
-                        Integer.class,
-                        "approval-service-rules-analyser",
-                        eventId));
+                approvalServiceAppender.list.stream()
+                        .filter(e -> e.getLevel() == Level.WARN)
+                        .filter(e -> e.getFormattedMessage()
+                                .equals("event for unknown claim ignored claimId=" + claimId + " eventId=" + eventId))
+                        .count());
+        assertEquals(
+                1,
+                countApprovalServiceMessage("duplicate event skipped claimId=" + claimId + " eventId=" + eventId));
+        assertEquals(1, processedEventsCount(ANALYSIS_COMPLETED_GROUP, eventId));
+        assertEquals(0, countWorkflowRows(claimId));
+        assertEquals(0, countApprovals(claimId));
+        assertEquals(0, countDecisionAudit(claimId));
+        assertEquals(0, countAllOutboxForClaim(claimId));
+        assertEquals(0, countLateAnalysisIgnoredLines());
     }
 
     @RepeatedTest(20)
@@ -822,14 +972,22 @@ class ApprovalDecisionIT {
     }
 
     private void invokeAnalysisCompleted(UUID claimId, UUID eventId, List<String> flags) {
+        analysisListener.onAnalysisCompleted(analysisCompletedRecord(claimId, eventId, flags));
+    }
+
+    private ConsumerRecord<String, ClaimAnalysisCompletedEvent> analysisCompletedRecord(
+            UUID claimId, UUID eventId, List<String> flags) {
         ClaimAnalysisCompletedEvent event = new ClaimAnalysisCompletedEvent(eventId, claimId, flags);
         ConsumerRecord<String, ClaimAnalysisCompletedEvent> record =
                 new ConsumerRecord<>(CLAIM_ANALYSIS_COMPLETED, 0, 0L, claimId.toString(), event);
-        record.headers().add(new RecordHeader("eventId", eventId.toString().getBytes(StandardCharsets.UTF_8)));
-        analysisListener.onAnalysisCompleted(record);
+        record.headers().add(
+                new RecordHeader(
+                        OutboxMessageSender.EVENT_ID_HEADER,
+                        eventId.toString().getBytes(StandardCharsets.UTF_8)));
+        return record;
     }
 
-    private void invokeAnalysisRequested(UUID claimId, UUID eventId) {
+    private ConsumerRecord<String, ClaimAnalysisRequestedEvent> analysisRequestedRecord(UUID claimId, UUID eventId) {
         ClaimAnalysisRequestedEvent event = new ClaimAnalysisRequestedEvent(eventId, claimId, CLAIMED);
         ConsumerRecord<String, ClaimAnalysisRequestedEvent> record =
                 new ConsumerRecord<>(CLAIM_ANALYSIS_REQUESTED, 0, 0L, claimId.toString(), event);
@@ -837,107 +995,182 @@ class ApprovalDecisionIT {
                 new RecordHeader(
                         OutboxMessageSender.EVENT_ID_HEADER,
                         eventId.toString().getBytes(StandardCharsets.UTF_8)));
-        rulesOnlyAnalyser.onAnalysisRequested(record);
+        return record;
+    }
+
+    private void deliverAllAnalysisCompletedOutboxRows(UUID claimId) throws Exception {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT event_id, payload FROM outbox WHERE aggregate_id = ? AND topic = ? ORDER BY id",
+                claimId,
+                CLAIM_ANALYSIS_COMPLETED);
+        for (Map<String, Object> row : rows) {
+            UUID eventId = (UUID) row.get("event_id");
+            JsonNode payload = objectMapper.readTree(row.get("payload").toString());
+            List<String> flags = objectMapper.convertValue(
+                    payload.get("flags"),
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+            invokeAnalysisCompleted(claimId, eventId, flags);
+        }
     }
 
     private void runCaseTwoRaceIteration(boolean humanWins, int repetition) throws Exception {
         long claimSuffix = humanWins ? 350L + repetition : 370L + repetition;
-        UUID claimId = uuid(String.format("%012x", claimSuffix));
+        UUID claimId = uuid(String.format("%012d", claimSuffix));
         seedDecidable(claimId);
-        resetRaceLatches();
-        installRaceStoreLatches();
-        UUID analysisEventId = UUID.randomUUID();
+        resetForNextRun();
+        installRaceStoreLatches(claimId);
+        UUID analysisEventId = humanWins ? raceHumanEventId(repetition) : raceAutoEventId(repetition);
         AtomicReference<HttpResponse<String>> humanResponse = new AtomicReference<>();
-        AtomicReference<Exception> humanError = new AtomicReference<>();
-        AtomicReference<Exception> autoError = new AtomicReference<>();
+        AtomicReference<Throwable> humanError = new AtomicReference<>();
+        AtomicReference<Throwable> autoError = new AtomicReference<>();
         Thread human = new Thread(() -> {
             try {
                 humanResponse.set(decide(claimId, "APPROVED", AGENT_A));
-            } catch (Exception exception) {
-                humanError.set(exception);
+            } catch (Throwable throwable) {
+                humanError.set(throwable);
             }
         });
         Thread auto = new Thread(() -> {
             try {
                 invokeAnalysisCompleted(claimId, analysisEventId, List.of());
-            } catch (Exception exception) {
-                autoError.set(exception);
+            } catch (Throwable throwable) {
+                autoError.set(throwable);
             }
         });
         human.start();
         auto.start();
         if (!humanEntered.await(10, TimeUnit.SECONDS) || !autoEntered.await(10, TimeUnit.SECONDS)) {
-            throw new IllegalStateException("race entered latch timed out");
+            throw new AssertionError("race entered latch timed out");
         }
         if (humanWins) {
             humanRelease.countDown();
             human.join(10_000);
+            assertFalse(human.isAlive());
             autoRelease.countDown();
             auto.join(10_000);
-            assertEquals(200, humanResponse.get().statusCode());
-            assertConflictAudit(claimId, DecidedBy.AUTO_APPROVAL.userId(), "SYSTEM", "APPROVED");
+            assertFalse(auto.isAlive());
         } else {
             autoRelease.countDown();
             auto.join(10_000);
+            assertFalse(auto.isAlive());
             humanRelease.countDown();
             human.join(10_000);
-            assertConflictResponse(humanResponse.get());
-            assertConflictAudit(claimId, AGENT_A.toString(), "AGENT", "APPROVED");
+            assertFalse(human.isAlive());
         }
         if (humanError.get() != null) {
-            throw humanError.get();
+            throw new Exception(humanError.get());
         }
         if (autoError.get() != null) {
-            throw autoError.get();
+            throw new Exception(autoError.get());
         }
-        assertEquals(1, countApprovals(claimId));
-        assertEquals(1, decisionOutboxCount(claimId));
-        assertEquals(1, countDecisionAudit(claimId));
         assertEquals("APPROVED", workflowStatus(claimId));
+        assertEquals(1, countApprovals(claimId));
+        assertEquals(1, countDecisionAudit(claimId));
+        assertEquals(1, processedEventsCount(ANALYSIS_COMPLETED_GROUP, analysisEventId));
         Map<String, Object> approval = approvalSnapshot(claimId);
+        Map<String, Object> outbox = singleDecisionOutboxRow(claimId);
+        JsonNode payload = objectMapper.readTree(outbox.get("payload").toString());
         if (humanWins) {
+            assertEquals(200, humanResponse.get().statusCode());
             assertEquals("HUMAN", approval.get("source"));
             assertEquals(AGENT_A.toString(), approval.get("decided_by_user_id"));
+            assertEquals("AGENT", approval.get("decided_by_role"));
+            assertEquals(1, countOutboxForAggregate(claimId, CLAIM_APPROVED));
+            assertEquals(0, countOutboxForAggregate(claimId, CLAIM_REJECTED));
+            assertEquals(
+                    "{\"userId\":\""
+                            + AGENT_A
+                            + "\",\"role\":\"AGENT\"}",
+                    payload.get("decidedBy").toString());
+            assertConflictAudit(claimId, DecidedBy.AUTO_APPROVAL.userId(), "SYSTEM", "APPROVED");
+            assertEquals(
+                    1,
+                    countApprovalServiceMessage(
+                            "late analysis ignored claimId="
+                                    + claimId
+                                    + " eventId="
+                                    + analysisEventId
+                                    + " status=APPROVED"));
         } else {
+            assertConflictResponse(humanResponse.get());
             assertEquals("AUTO", approval.get("source"));
             assertEquals(DecidedBy.AUTO_APPROVAL.userId(), approval.get("decided_by_user_id"));
-            Map<String, Object> outbox = singleDecisionOutboxRow(claimId);
-            JsonNode payload = objectMapper.readTree(outbox.get("payload").toString());
-            assertEquals(DecidedBy.AUTO_APPROVAL.userId(), payload.get("decidedBy").get("userId").asText());
+            assertEquals("SYSTEM", approval.get("decided_by_role"));
+            assertEquals(
+                    "{\"userId\":\""
+                            + DecidedBy.AUTO_APPROVAL.userId()
+                            + "\",\"role\":\"SYSTEM\"}",
+                    payload.get("decidedBy").toString());
+            assertConflictAudit(claimId, AGENT_A.toString(), "AGENT", "APPROVED");
+            assertEquals(0, countLateAnalysisIgnoredLines());
         }
-        restoreRealWorkflowStore();
     }
 
-    private void resetRaceLatches() {
+    private void resetForNextRun() {
         humanEntered = new CountDownLatch(1);
         humanRelease = new CountDownLatch(1);
         autoEntered = new CountDownLatch(1);
         autoRelease = new CountDownLatch(1);
     }
 
-    private void installRaceStoreLatches() throws Exception {
-        doAnswer(invocation -> {
-            humanEntered.countDown();
-            if (!humanRelease.await(10, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("human release latch timed out");
-            }
-            return invocation.callRealMethod();
-        }).when(claimWorkflowStore).transitionDecidedStatus(any(), any());
-        doAnswer(invocation -> {
-            String newStatus = invocation.getArgument(1);
-            if (WorkflowStatus.APPROVED.equals(newStatus)) {
-                autoEntered.countDown();
-                if (!autoRelease.await(10, TimeUnit.SECONDS)) {
-                    throw new IllegalStateException("auto release latch timed out");
-                }
-            }
-            return invocation.callRealMethod();
-        }).when(claimWorkflowStore).transitionFromAnalysisPending(any(), any());
+    private void installRaceStoreLatches(UUID claimId) {
+        doAnswer(latched(humanEntered, humanRelease))
+                .when(claimWorkflowStore)
+                .transitionDecidedStatus(eq(claimId), eq("APPROVED"));
+        doAnswer(latched(autoEntered, autoRelease))
+                .when(claimWorkflowStore)
+                .transitionFromAnalysisPending(eq(claimId), eq("APPROVED"));
     }
 
-    private void restoreRealWorkflowStore() {
-        doCallRealMethod().when(claimWorkflowStore).transitionDecidedStatus(any(), any());
-        doCallRealMethod().when(claimWorkflowStore).transitionFromAnalysisPending(any(), any());
+    private static Answer<Object> latched(CountDownLatch entered, CountDownLatch release) {
+        return invocation -> {
+            entered.countDown();
+            if (!release.await(10, TimeUnit.SECONDS)) {
+                throw new AssertionError("release latch timed out");
+            }
+            return invocation.callRealMethod();
+        };
+    }
+
+    private static UUID raceHumanEventId(int repetition) {
+        return UUID.nameUUIDFromBytes(("race-h-" + repetition).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static UUID raceAutoEventId(int repetition) {
+        return UUID.nameUUIDFromBytes(("race-a-" + repetition).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private int processedEventsCount(String consumerGroup, UUID eventId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM processed_events WHERE consumer_group = ? AND event_id = ?",
+                Integer.class,
+                consumerGroup,
+                eventId);
+    }
+
+    private long countApprovalServiceMessage(String message) {
+        return approvalServiceAppender.list.stream()
+                .filter(event -> event.getFormattedMessage().equals(message))
+                .count();
+    }
+
+    private long countLateAnalysisIgnoredLines() {
+        return approvalServiceAppender.list.stream()
+                .filter(event -> event.getFormattedMessage().startsWith("late analysis ignored claimId="))
+                .count();
+    }
+
+    private long countUnknownClaimIgnoredLines() {
+        return approvalServiceAppender.list.stream()
+                .filter(event -> event.getFormattedMessage().startsWith("event for unknown claim ignored claimId="))
+                .count();
+    }
+
+    private int countAllOutboxForClaim(UUID claimId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM outbox WHERE aggregate_id = ?",
+                Integer.class,
+                claimId);
     }
 
     private void seedAutoApprovedClaim(UUID claimId, UUID decisionId, UUID outboxEventId) {
