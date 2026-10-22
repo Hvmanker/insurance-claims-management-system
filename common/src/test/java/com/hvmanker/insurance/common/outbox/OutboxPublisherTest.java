@@ -78,6 +78,7 @@ class OutboxPublisherTest {
             assertEquals(
                     "00000000-0000-0000-0000-000000000101",
                     new String(header.value(), StandardCharsets.UTF_8));
+            assertEquals("00000000-0000-0000-0000-0000000000a1", record.key());
         }
     }
 
@@ -100,8 +101,10 @@ class OutboxPublisherTest {
                     OutboxInboxTestSupport.consumeUntilQuiet(consumer, 5);
             assertEquals(5, records.size());
             for (int i = 0; i < 5; i++) {
-                Header header = records.get(i).headers().lastHeader(OutboxMessageSender.EVENT_ID_HEADER);
+                ConsumerRecord<String, String> record = records.get(i);
+                Header header = record.headers().lastHeader(OutboxMessageSender.EVENT_ID_HEADER);
                 assertEquals(eventIds[i].toString(), new String(header.value(), StandardCharsets.UTF_8));
+                assertEquals(aggregates[i].toString(), record.key());
             }
         }
     }
