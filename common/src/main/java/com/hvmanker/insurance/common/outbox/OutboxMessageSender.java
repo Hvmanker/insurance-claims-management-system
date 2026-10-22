@@ -9,6 +9,10 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+/**
+ * Sends outbox rows to Kafka. The message key is {@code aggregate_id} (the claim id) as a string
+ * so all events for a claim stay ordered on one partition.
+ */
 @FunctionalInterface
 public interface OutboxMessageSender {
 
@@ -18,10 +22,9 @@ public interface OutboxMessageSender {
 
     static OutboxMessageSender kafka(KafkaTemplate<String, String> kafkaTemplate, Duration sendTimeout) {
         return record -> {
-            String claimIdKey = record.aggregateId().toString();
             ProducerRecord<String, String> message = new ProducerRecord<>(
                     record.topic(),
-                    claimIdKey,
+                    record.aggregateId().toString(),
                     record.payload());
             message.headers().add(new RecordHeader(
                     EVENT_ID_HEADER,
