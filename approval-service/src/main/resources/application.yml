@@ -4,6 +4,11 @@ server:
 claims:
   auto-approval-limit: ${AUTO_APPROVAL_LIMIT:10000.00}
 
+approval:
+  analyser:
+    delay-ms: ${ANALYSER_DELAY_MS:0}
+    enabled: ${ANALYSER_ENABLED:true}
+
 insurance:
   outbox:
     poll-interval-ms: 1000
