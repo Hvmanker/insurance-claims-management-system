@@ -10,6 +10,10 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.HashSet;
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -32,16 +36,38 @@ class ClaimServiceStatusTitleTest {
     @Test
     void statusTitleAnalysisPending() {
         String title = claimService.statusTitle(ClaimStatus.ANALYSIS_PENDING);
+        assertEquals("Claim sent for analysis", title);
         assertNotNull(title);
         assertFalse(title.isBlank());
         assertNotEquals(claimService.statusTitle(ClaimStatus.SUBMITTED), title);
+        for (ClaimStatus status : ClaimStatus.values()) {
+            String statusTitle = claimService.statusTitle(status);
+            assertNotNull(statusTitle);
+            assertFalse(statusTitle.isBlank());
+        }
+        Set<String> titles = new HashSet<>();
+        for (ClaimStatus status : ClaimStatus.values()) {
+            titles.add(claimService.statusTitle(status));
+        }
+        assertEquals(ClaimStatus.values().length, titles.size());
     }
 
     @Test
     void statusTitleReviewReady() {
         String title = claimService.statusTitle(ClaimStatus.REVIEW_READY);
+        assertEquals("Claim ready for review", title);
         assertNotNull(title);
         assertFalse(title.isBlank());
         assertNotEquals(claimService.statusTitle(ClaimStatus.SUBMITTED), title);
+        for (ClaimStatus status : ClaimStatus.values()) {
+            String statusTitle = claimService.statusTitle(status);
+            assertNotNull(statusTitle);
+            assertFalse(statusTitle.isBlank());
+        }
+        Set<String> titles = new HashSet<>();
+        for (ClaimStatus status : ClaimStatus.values()) {
+            titles.add(claimService.statusTitle(status));
+        }
+        assertEquals(ClaimStatus.values().length, titles.size());
     }
 }
