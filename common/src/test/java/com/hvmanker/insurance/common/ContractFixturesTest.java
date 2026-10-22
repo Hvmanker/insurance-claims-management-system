@@ -2,6 +2,8 @@ package com.hvmanker.insurance.common;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.hvmanker.insurance.common.events.ClaimAnalysisRequestedEvent;
 import com.networknt.schema.JsonSchema;
 import com.networknt.schema.JsonSchemaFactory;
 import com.networknt.schema.SchemaLocation;
@@ -14,9 +16,11 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.UUID;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -121,6 +125,37 @@ class ContractFixturesTest {
                 .count();
         assertTrue(analysisRequestedCases >= 5,
                 () -> "claim.analysis.requested fixture parameter source must yield at least 5 cases");
+    }
+
+    @Test
+    void serializedEnvelopeValidatesAgainstContractSchema() throws Exception {
+        UUID eventId = UUID.fromString("e1000000-0000-4000-8000-000000000001");
+        UUID claimId = UUID.fromString("c2000000-0000-4000-8000-000000000001");
+        UUID correlationId = UUID.fromString("d3000000-0000-4000-8000-000000000001");
+        ClaimAnalysisRequestedEvent event =
+                new ClaimAnalysisRequestedEvent(eventId, claimId, new BigDecimal("4000.00"));
+
+        ObjectNode envelope = OBJECT_MAPPER.createObjectNode();
+        envelope.put("eventId", eventId.toString());
+        envelope.put("eventType", "claim.analysis.requested");
+        envelope.put("schemaVersion", 1);
+        envelope.put("aggregateId", claimId.toString());
+        envelope.put("occurredAt", "2026-10-01T12:00:00Z");
+        envelope.put("correlationId", correlationId.toString());
+        envelope.putNull("causationId");
+
+        JsonNode eventFields = OBJECT_MAPPER.readTree(OBJECT_MAPPER.writeValueAsString(event));
+        ObjectNode payload = OBJECT_MAPPER.createObjectNode();
+        payload.put("claimId", claimId.toString());
+        payload.set("claimedAmount", eventFields.get("claimedAmount"));
+        envelope.set("payload", payload);
+
+        Path schemaPath = findRepoRoot()
+                .resolve("contracts/events/claim.analysis.requested/v1.schema.json");
+        JsonSchema schema = loadSchema(schemaPath);
+        Set<ValidationMessage> errors = schema.validate(envelope);
+        assertTrue(errors.isEmpty(), () -> describeErrors(schemaPath, errors));
+        assertEquals("4000.00", payload.get("claimedAmount").asText());
     }
 
     @Test
