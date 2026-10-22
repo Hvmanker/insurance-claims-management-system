@@ -7,6 +7,7 @@ import com.hvmanker.insurance.approval.domain.ApprovalSource;
 import com.hvmanker.insurance.approval.domain.ClaimApproval;
 import com.hvmanker.insurance.approval.domain.ClaimApprovalRepository;
 import com.hvmanker.insurance.approval.domain.ClaimWorkflow;
+import com.hvmanker.insurance.approval.domain.ClaimWorkflowRepository;
 import com.hvmanker.insurance.approval.domain.ClaimWorkflowStore;
 import com.hvmanker.insurance.approval.domain.WorkflowStatus;
 import com.hvmanker.insurance.approval.web.InternalDecisionLookupResponse;
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -41,6 +43,7 @@ public class ApprovalService {
     private static final String AGENT_ROLE = "AGENT";
 
     private final ClaimApprovalRepository approvalRepository;
+    private final ClaimWorkflowRepository claimWorkflowRepository;
     private final ClaimWorkflowStore claimWorkflowStore;
     private final InboxGuard inboxGuard;
     private final OutboxWriter outboxWriter;
@@ -49,12 +52,14 @@ public class ApprovalService {
 
     public ApprovalService(
             ClaimApprovalRepository approvalRepository,
+            ClaimWorkflowRepository claimWorkflowRepository,
             ClaimWorkflowStore claimWorkflowStore,
             InboxGuard inboxGuard,
             OutboxWriter outboxWriter,
             ObjectMapper objectMapper,
             DecisionConflictRecorder decisionConflictRecorder) {
         this.approvalRepository = approvalRepository;
+        this.claimWorkflowRepository = claimWorkflowRepository;
         this.claimWorkflowStore = claimWorkflowStore;
         this.inboxGuard = inboxGuard;
         this.outboxWriter = outboxWriter;
@@ -88,40 +93,51 @@ public class ApprovalService {
     }
 
     @Transactional
-    public void recordHumanDecision(UUID claimId, InternalDecisionRequest request, ClaimWorkflow workflow) {
-        ApprovalDecision attempted = request.approved() ? ApprovalDecision.APPROVED : ApprovalDecision.REJECTED;
+    public void decide(
+            UUID claimId,
+            ApprovalDecision action,
+            DecidedBy decidedBy,
+            BigDecimal approvedAmount,
+            String reason) {
+        String targetStatus = action == ApprovalDecision.APPROVED ? WorkflowStatus.APPROVED : WorkflowStatus.REJECTED;
         int updated = claimWorkflowStore.transitionStatus(
                 claimId,
-                attempted == ApprovalDecision.APPROVED ? WorkflowStatus.APPROVED : WorkflowStatus.REJECTED,
+                targetStatus,
                 List.of(WorkflowStatus.ANALYSIS_PENDING, WorkflowStatus.REVIEW_READY));
         if (updated == 0) {
+            if (!claimWorkflowStore.existsByClaimId(claimId)) {
+                throw new ClaimWorkflowNotFoundException();
+            }
             decisionConflictRecorder.recordHumanLostConflict(
                     claimId,
-                    request.userId(),
-                    AGENT_ROLE,
-                    attempted);
+                    decidedBy.userId(),
+                    decidedBy.role(),
+                    action);
             throw new ClaimAlreadyDecidedException();
         }
 
+        ClaimWorkflow workflow = claimWorkflowRepository.findById(claimId).orElseThrow();
         UUID decisionId = UUID.randomUUID();
         Instant decidedAt = Instant.now();
+        BigDecimal resolvedApprovedAmount = action == ApprovalDecision.APPROVED
+                ? (approvedAmount != null ? approvedAmount : workflow.getClaimedAmount())
+                : null;
         ClaimApproval approval = new ClaimApproval(
                 claimId,
                 workflow.getPolicyNumber(),
                 workflow.getClaimedAmount(),
-                request.approved() ? workflow.getClaimedAmount() : null,
-                attempted,
-                request.reason(),
+                resolvedApprovedAmount,
+                action,
+                reason,
                 decidedAt,
                 decisionId,
-                request.userId(),
-                AGENT_ROLE,
+                decidedBy.userId(),
+                decidedBy.role(),
                 ApprovalSource.HUMAN);
         approvalRepository.save(approval);
 
-        DecidedBy decidedBy = new DecidedBy(request.userId(), AGENT_ROLE);
         UUID outboxEventId = UUID.randomUUID();
-        if (request.approved()) {
+        if (action == ApprovalDecision.APPROVED) {
             appendOutbox(
                     outboxEventId,
                     claimId,
@@ -132,7 +148,7 @@ public class ApprovalService {
                             claimId,
                             workflow.getPolicyNumber(),
                             workflow.getClaimedAmount(),
-                            workflow.getClaimedAmount(),
+                            resolvedApprovedAmount,
                             decidedBy,
                             null,
                             decidedAt));
@@ -147,9 +163,15 @@ public class ApprovalService {
                         decisionId,
                         claimId,
                         workflow.getPolicyNumber(),
-                        request.reason(),
+                        reason,
                         decidedBy,
                         decidedAt));
+    }
+
+    @Transactional
+    public void recordHumanDecision(UUID claimId, InternalDecisionRequest request) {
+        ApprovalDecision action = request.approved() ? ApprovalDecision.APPROVED : ApprovalDecision.REJECTED;
+        decide(claimId, action, new DecidedBy(request.userId(), AGENT_ROLE), null, request.reason());
     }
 
     @Transactional(readOnly = true)

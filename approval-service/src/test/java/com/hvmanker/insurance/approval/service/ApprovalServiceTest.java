@@ -2,6 +2,7 @@ package com.hvmanker.insurance.approval.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hvmanker.insurance.approval.domain.ClaimApprovalRepository;
+import com.hvmanker.insurance.approval.domain.ClaimWorkflowRepository;
 import com.hvmanker.insurance.approval.domain.ClaimWorkflowStore;
 import com.hvmanker.insurance.approval.domain.WorkflowStatus;
 import com.hvmanker.insurance.common.events.ClaimSubmittedEvent;
@@ -30,6 +31,9 @@ class ApprovalServiceTest {
     private ClaimApprovalRepository approvalRepository;
 
     @Mock
+    private ClaimWorkflowRepository claimWorkflowRepository;
+
+    @Mock
     private ClaimWorkflowStore claimWorkflowStore;
 
     @Mock
@@ -50,6 +54,7 @@ class ApprovalServiceTest {
     void setUp() {
         approvalService = new ApprovalService(
                 approvalRepository,
+                claimWorkflowRepository,
                 claimWorkflowStore,
                 inboxGuard,
                 outboxWriter,
