@@ -501,12 +501,19 @@ class ApprovalDecisionIT {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("invalidDecisionCases")
-    void invalidDecisionBodyIs400(String caseName, UUID claimId, String bodyJson) throws Exception {
-        seedDecidable(claimId);
+    void invalidDecisionBodyIs400(String caseName, UUID claimId, boolean seedWorkflow, String bodyJson)
+            throws Exception {
+        if (seedWorkflow) {
+            seedDecidable(claimId);
+        }
         HttpResponse<String> response = postDecide(claimId, bodyJson);
         assertInvalidDecisionResponse(response);
         assertWritesNothing(claimId);
-        assertEquals("ANALYSIS_PENDING", workflowStatus(claimId));
+        if (seedWorkflow) {
+            assertEquals("ANALYSIS_PENDING", workflowStatus(claimId));
+        } else {
+            assertEquals(0, countWorkflowRows(claimId));
+        }
     }
 
     static Stream<Arguments> invalidDecisionCases() {
@@ -516,33 +523,58 @@ class ApprovalDecisionIT {
                 Arguments.of(
                         "amountZero",
                         uuid("000000000341"),
+                        true,
                         bodyWithAmount(agent, "0.00")),
                 Arguments.of(
                         "amountNegative",
                         uuid("000000000342"),
+                        true,
                         bodyWithAmount(agent, "-1.00")),
                 Arguments.of(
                         "amountScaleThree",
                         uuid("000000000343"),
+                        true,
                         bodyWithAmount(agent, "100.001")),
                 Arguments.of(
                         "roleNotAgent",
                         uuid("000000000344"),
+                        true,
                         """
                                 {"action":"APPROVED","reason":"%s","decidedBy":{"userId":"%s","role":"ADJUSTER"}}
                                 """.formatted(baseReason, agent)),
                 Arguments.of(
                         "reasonBlank",
                         uuid("000000000345"),
+                        true,
                         """
                                 {"action":"APPROVED","reason":"   ","decidedBy":{"userId":"%s","role":"AGENT"}}
                                 """.formatted(agent)),
                 Arguments.of(
                         "reasonTooLong",
                         uuid("000000000346"),
+                        true,
                         """
                                 {"action":"APPROVED","reason":"%s","decidedBy":{"userId":"%s","role":"AGENT"}}
-                                """.formatted("r".repeat(501), agent)));
+                                """.formatted("r".repeat(501), agent)),
+                Arguments.of(
+                        "malformedJson",
+                        uuid("000000000348"),
+                        true,
+                        "{\"action\":\"APPROVED\","),
+                Arguments.of(
+                        "actionUnknown",
+                        uuid("000000000349"),
+                        true,
+                        """
+                                {"action":"MAYBE","reason":"%s","decidedBy":{"userId":"%s","role":"AGENT"}}
+                                """.formatted(baseReason, agent)),
+                Arguments.of(
+                        "decidedByMissingNoWorkflow",
+                        uuid("000000000350"),
+                        false,
+                        """
+                                {"action":"APPROVED","reason":"%s"}
+                                """.formatted(baseReason)));
     }
 
     @Test

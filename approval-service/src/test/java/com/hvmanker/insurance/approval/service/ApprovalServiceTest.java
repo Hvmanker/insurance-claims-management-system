@@ -10,7 +10,6 @@ import com.hvmanker.insurance.approval.domain.ClaimWorkflowRepository;
 import com.hvmanker.insurance.approval.domain.ClaimWorkflowStore;
 import com.hvmanker.insurance.approval.domain.DecisionAuditRepository;
 import com.hvmanker.insurance.approval.domain.WorkflowStatus;
-import com.hvmanker.insurance.approval.web.InternalDecisionRequest;
 import com.hvmanker.insurance.common.events.ClaimSubmittedEvent;
 import com.hvmanker.insurance.common.inbox.InboxGuard;
 import com.hvmanker.insurance.common.outbox.OutboxWriter;
@@ -32,7 +31,6 @@ import static com.hvmanker.insurance.common.KafkaTopics.CLAIM_ANALYSIS_REQUESTED
 import static com.hvmanker.insurance.common.KafkaTopics.CLAIM_APPROVED;
 import static com.hvmanker.insurance.common.KafkaTopics.CLAIM_REJECTED;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -93,21 +91,6 @@ class ApprovalServiceTest {
         logAppender.start();
         logger.addAppender(logAppender);
         logger.setLevel(Level.INFO);
-    }
-
-    @Test
-    void recordHumanDecisionMissingDecidedByOnUnknownClaimIsInvalidRequest() {
-        UUID claimId = UUID.fromString("00000000-0000-0000-0000-000000000328");
-        InternalDecisionRequest request = new InternalDecisionRequest(
-                "APPROVED",
-                "test reason 1A.3",
-                null,
-                null);
-
-        assertThrows(
-                InvalidDecisionRequestException.class,
-                () -> approvalService.recordHumanDecision(claimId, request));
-        verify(claimWorkflowStore, never()).transitionDecidedStatus(any(), any());
     }
 
     @Test
