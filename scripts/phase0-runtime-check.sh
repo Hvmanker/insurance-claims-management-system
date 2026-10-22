@@ -572,10 +572,15 @@ redis_scan_claims_keys() {
     redis-cli --scan --pattern 'claims*' 2>/dev/null || true
 }
 
+redis_claim_cache_key_for_id() {
+  printf 'claims::%s' "$1"
+}
+
 redis_scan_contains_claim_id() {
-  local claim_id="$1" scan_out
+  local claim_id="$1" expected_key scan_out
+  expected_key="$(redis_claim_cache_key_for_id "$claim_id")"
   scan_out="$(redis_scan_claims_keys)"
-  grep -qF "$claim_id" <<< "$scan_out" 2>/dev/null
+  grep -qxF "$expected_key" <<< "$scan_out" 2>/dev/null
 }
 
 log_check_06_redis_scan() {
@@ -600,6 +605,66 @@ compose_ps_lines() {
   compose ps -a --format '{{.Service}}\t{{.State}}\t{{.Health}}' 2>/dev/null || true
 }
 
+# Services with restart: "no" in docker-compose.yml (e.g. kafka-init) may exit 0 once and stay exited.
+phase0_compose_oneshot_service_names() {
+  awk '
+    /^  [a-z0-9][a-z0-9_-]*:$/ {
+      if (svc != "" && restart_no) {
+        print svc
+      }
+      svc = $0
+      sub(/^  /, "", svc)
+      sub(/:$/, "", svc)
+      restart_no = 0
+      next
+    }
+    svc != "" && /^    restart: "no"/ {
+      restart_no = 1
+      next
+    }
+    /^  [a-z0-9]/ && !/^    / {
+      if (svc != "" && restart_no) {
+        print svc
+      }
+      svc = ""
+      restart_no = 0
+    }
+    END {
+      if (svc != "" && restart_no) {
+        print svc
+      }
+    }
+  ' "${REPO_ROOT}/docker-compose.yml"
+}
+
+phase0_compose_service_exit_code() {
+  local svc="$1"
+  compose ps -a "$svc" --format '{{.ExitCode}}' 2>/dev/null | head -n1 || true
+}
+
+phase0_is_oneshot_service() {
+  local svc="$1" oneshot
+  while IFS= read -r oneshot; do
+    [[ -z "$oneshot" ]] && continue
+    if [[ "$svc" == "$oneshot" ]]; then
+      return 0
+    fi
+  done <<< "$(phase0_compose_oneshot_service_names)"
+  return 1
+}
+
+phase0_service_counts_as_healthy() {
+  local svc="$1" state="$2" health="$3"
+  local state_lc exit_code
+  if phase0_is_oneshot_service "$svc"; then
+    state_lc="$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')"
+    exit_code="$(phase0_compose_service_exit_code "$svc")"
+    [[ "$state_lc" == "exited" && "$exit_code" == "0" ]]
+    return
+  fi
+  [[ "$state" == "running" && "$health" == "healthy" ]]
+}
+
 compose_ps_status_report() {
   local svc state health
   local -a parts=()
@@ -616,7 +681,7 @@ compose_all_services_running_healthy() {
   while IFS=$'\t' read -r svc state health; do
     [[ -z "$svc" ]] && continue
     saw_service=1
-    if [[ "$state" != "running" ]] || [[ "$health" != "healthy" ]]; then
+    if ! phase0_service_counts_as_healthy "$svc" "$state" "$health"; then
       return 1
     fi
   done <<< "$(compose_ps_lines)"
@@ -624,11 +689,18 @@ compose_all_services_running_healthy() {
 }
 
 services_not_fully_healthy_list() {
-  local svc state health
+  local svc state health exit_code state_lc
   local -a parts=()
   while IFS=$'\t' read -r svc state health; do
     [[ -z "$svc" ]] && continue
-    if [[ "$state" != "running" ]] || [[ "$health" != "healthy" ]]; then
+    if phase0_service_counts_as_healthy "$svc" "$state" "$health"; then
+      continue
+    fi
+    if phase0_is_oneshot_service "$svc"; then
+      exit_code="$(phase0_compose_service_exit_code "$svc")"
+      state_lc="$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')"
+      parts+=("${svc}(state=${state_lc:-empty},exit=${exit_code:-empty})")
+    else
       parts+=("${svc}(state=${state},health=${health:-empty})")
     fi
   done <<< "$(compose_ps_lines)"
@@ -1163,11 +1235,6 @@ check_P3_login_cache_high_value() {
     emit_result "$nn" FAIL "$name" "could not parse claim id from submit response"
     return
   fi
-  status="$(claim_status "$jar_a" "$claim_id" || true)"
-  if [[ "$status" != "SUBMITTED" ]]; then
-    emit_result "$nn" FAIL "$name" "claim ${CHECK_06_CLAIM_AMOUNT} above 10k limit status=${status:-unknown}, expected SUBMITTED before AGENT decide"
-    return
-  fi
 
   log_check_06_redis_scan "before-read"
   if redis_scan_contains_claim_id "$claim_id"; then
@@ -1182,6 +1249,11 @@ check_P3_login_cache_high_value() {
   log_check_06_redis_scan "after-read"
   if ! redis_scan_contains_claim_id "$claim_id"; then
     emit_result "$nn" FAIL "$name" "after-read: claims* key for claim missing after AGENT read"
+    return
+  fi
+  status="$(claim_status "$jar_a" "$claim_id" || true)"
+  if [[ "$status" != "SUBMITTED" ]]; then
+    emit_result "$nn" FAIL "$name" "claim ${CHECK_06_CLAIM_AMOUNT} above 10k limit status=${status:-unknown}, expected SUBMITTED before AGENT decide"
     return
   fi
 

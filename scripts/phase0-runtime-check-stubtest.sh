@@ -547,11 +547,15 @@ phase0_stub_compose_ps_kafka_init() {
   printf '%s\n' "${PHASE0_STUB_KAFKA_INIT_EXIT:-0}"
 }
 
-services_not_fully_healthy_list() {
-  printf '%s' "${PHASE0_STUB_UNHEALTHY:-}"
-}
-
 compose() {
+  if [[ "${1:-}" == "ps" && "${2:-}" == "-a" && "${3:-}" == "--format" && "${4:-}" == '{{.Service}}\t{{.State}}\t{{.Health}}' ]]; then
+    if [[ -z "${PHASE0_STUB_PS_LINES:-}" ]]; then
+      printf '%s\n' $'postgres\trunning\thealthy'
+    else
+      printf '%s\n' "${PHASE0_STUB_PS_LINES}"
+    fi
+    return 0
+  fi
   if [[ "${1:-}" == "ps" && "${2:-}" == "--format" && "${3:-}" == "{{.Ports}}" ]]; then
     printf '%s\n' "${PHASE0_STUB_COMPOSE_PORTS:-0.0.0.0:8081->8081/tcp}"
     return 0
@@ -611,6 +615,7 @@ PHASE0_STUB_KAFKA_LIST=(
 PHASE0_STUB_KAFKA_CONFIGS_OUTPUT='auto.create.topics.enable=false	'
 PHASE0_STUB_KAFKA_INIT_STATE=exited
 PHASE0_STUB_KAFKA_INIT_EXIT=0
+PHASE0_STUB_PS_LINES=$'postgres\trunning\thealthy\nkafka-init\texited\n'
 PHASE0_STUB_CLAIM_SERVICE_LOGS='claim-service started'
 stub_pass_before="$PASS_COUNT"
 stub_fail_before="$FAIL_COUNT"
@@ -712,5 +717,59 @@ fi
 PASS_COUNT="$stub_pass_before"
 FAIL_COUNT="$stub_fail_before"
 unset PHASE0_STUB_BURST_LATE_INDEX PHASE0_STUB_BURST_INSTANT_DEADLINE
+
+echo "stub: one-shot service exited 0 is not listed as unhealthy"
+PHASE0_STUB_PS_LINES=$'postgres\trunning\thealthy\nkafka-init\texited\n'
+PHASE0_STUB_KAFKA_INIT_EXIT=0
+if [[ -n "$(services_not_fully_healthy_list)" ]]; then
+  echo "FAIL: kafka-init exited 0 should pass health list, got: $(services_not_fully_healthy_list)" >&2
+  exit 1
+fi
+
+echo "stub: one-shot service exited non-zero is listed as unhealthy"
+PHASE0_STUB_KAFKA_INIT_EXIT=1
+if ! grep -q 'kafka-init' <<<"$(services_not_fully_healthy_list)"; then
+  echo "FAIL: kafka-init exit 1 should fail health list" >&2
+  exit 1
+fi
+PHASE0_STUB_KAFKA_INIT_EXIT=0
+
+echo "stub: running but unhealthy long-running service fails health list"
+PHASE0_STUB_PS_LINES=$'claim-service\trunning\tunhealthy'
+if ! grep -q 'claim-service' <<<"$(services_not_fully_healthy_list)"; then
+  echo "FAIL: unhealthy claim-service should fail health list" >&2
+  exit 1
+fi
+PHASE0_STUB_PS_LINES=$'postgres\trunning\thealthy'
+
+echo "stub: redis claim cache key is scoped to claims::<claimId>"
+if [[ "$(redis_claim_cache_key_for_id 'abc-123')" != "claims::abc-123" ]]; then
+  echo "FAIL: redis_claim_cache_key_for_id" >&2
+  exit 1
+fi
+PHASE0_STUB_REDIS_KEYS=$'claims::11111111-1111-1111-1111-111111111111\n'
+redis_scan_claims_keys() {
+  printf '%s\n' "${PHASE0_STUB_REDIS_KEYS}"
+}
+if redis_scan_contains_claim_id "1111"; then
+  echo "FAIL: must not match claim id as substring of another key" >&2
+  exit 1
+fi
+if ! redis_scan_contains_claim_id "11111111-1111-1111-1111-111111111111"; then
+  echo "FAIL: expected exact claims::<uuid> match" >&2
+  exit 1
+fi
+
+echo "stub: P3 runs before-read redis scan before INSURED claim_status on the check-06 claim"
+p3_before_read_line="$(grep -n 'log_check_06_redis_scan "before-read"' "${REPO_ROOT}/scripts/phase0-runtime-check.sh" | head -n1 | cut -d: -f1)"
+p3_insured_status_line="$(grep -n 'status="$(claim_status "$jar_a" "$claim_id"' "${REPO_ROOT}/scripts/phase0-runtime-check.sh" | head -n1 | cut -d: -f1)"
+if [[ -z "$p3_before_read_line" || -z "$p3_insured_status_line" ]]; then
+  echo "FAIL: could not locate P3 before-read or insured claim_status lines" >&2
+  exit 1
+fi
+if [[ "$p3_before_read_line" -ge "$p3_insured_status_line" ]]; then
+  echo "FAIL: before-read must precede insured claim_status (lines ${p3_before_read_line} vs ${p3_insured_status_line})" >&2
+  exit 1
+fi
 
 echo "stub: all OK"
