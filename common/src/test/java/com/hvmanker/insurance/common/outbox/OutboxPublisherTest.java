@@ -1,5 +1,8 @@
 package com.hvmanker.insurance.common.outbox;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.header.Header;
@@ -45,18 +48,25 @@ class OutboxPublisherTest {
     }
 
     @Test
-    void publishesUnsentRowAndMarksSent() {
+    void publishesUnsentRowAndMarksSent() throws Exception {
         UUID e1 = eventId(1);
         String payload = payload(AGGREGATE_A);
         commitRow(e1, AGGREGATE_A, payload);
 
         runCycle(defaultPublisher());
 
+        ObjectMapper objectMapper = new ObjectMapper()
+                .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
         try (KafkaConsumer<String, String> consumer = OutboxInboxTestSupport.newConsumer(topic)) {
             List<ConsumerRecord<String, String>> records =
                     OutboxInboxTestSupport.consumeUntilQuiet(consumer, 1);
             assertEquals(1, records.size());
-            assertEquals(payload, records.get(0).value());
+            JsonNode expectedPayload = objectMapper.readTree(payload);
+            JsonNode consumedPayload = objectMapper.readTree(records.get(0).value());
+            assertEquals(expectedPayload, consumedPayload);
+            assertEquals(AGGREGATE_A.toString(), consumedPayload.get("claimId").asText());
+            assertTrue(consumedPayload.get("amount").isTextual());
+            assertEquals("4000.00", consumedPayload.get("amount").asText());
         }
 
         assertNotNull(jdbcTemplate.queryForObject(
