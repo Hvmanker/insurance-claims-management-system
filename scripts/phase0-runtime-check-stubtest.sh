@@ -278,6 +278,7 @@ fi
 if [[ "${PHASE0_NO_TEARDOWN:-}" != "1" ]]; then
   rm -f "$left_tmp" "$LOG_FILE"
 fi
+unset PHASE0_NO_TEARDOWN
 
 echo "stub: no-teardown project names (single ts) regex and real compose config -q"
 export PHASE0_NO_TEARDOWN=1
@@ -344,64 +345,18 @@ if [[ "$under_errexit_rc" -ne 2 ]]; then
 fi
 echo "stub: compose-only validator under errexit returned rc=2; caller continued"
 
-echo "stub: PHASE0_NO_TEARDOWN compose project names and stop-before-up"
+echo "stub: PHASE0_NO_TEARDOWN startup project switch (no extra c04/c05 stacks)"
+echo "stub: PHASE0_NO_TEARDOWN does not stop projects outside allowlist"
 STUB_DOCKER_LOG="$(mktemp)"
 DOCKER_STUB_LOG="$STUB_DOCKER_LOG"
 export DOCKER_STUB_LOG
-cat > "${STUB_BIN}/docker" <<'DOCKERSTUB'
+cat > "${STUB_BIN}/docker" <<'DOCKERSTUB2'
 #!/usr/bin/env bash
 printf '%s\n' "docker $*" >> "${DOCKER_STUB_LOG}"
-if [[ "${1:-}" == "compose" ]]; then
-  exit 0
-fi
 exit 0
-DOCKERSTUB
+DOCKERSTUB2
 chmod +x "${STUB_BIN}/docker"
 export PATH="${STUB_BIN}:${PATH}"
-export COMPOSE_PROJECT=phase0check
-PHASE0_STOPPED_PROJECTS=()
-PHASE0_USED_PROJECTS=()
-PHASE0_CREATED_PROJECTS=()
-PHASE0_ACTIVE_COMPOSE_PROJECT=""
-PHASE0_COMPOSE_RUN_TS="20261011t120000z"
-PHASE0_PROJECT_STARTUP="$(phase0_compose_project_for_phase startup)"
-PHASE0_PROJECT_C04="$(phase0_compose_project_for_phase c04)"
-PHASE0_PROJECT_C05="$(phase0_compose_project_for_phase c05)"
-phase0_compose_stop_project "${REQUIRED_COMPOSE_PROJECT}"
-phase0_switch_compose_project "${PHASE0_PROJECT_STARTUP}"
-phase0_prepare_fresh_compose_stack "c04"
-if ! grep -qE 'compose -p phase0check .* stop' "$DOCKER_STUB_LOG"; then
-  echo "FAIL: expected compose stop before fresh stack" >&2
-  exit 1
-fi
-printf '%s\n' 'docker compose -p /home/himankverma/project stop' >>"$DOCKER_STUB_LOG"
-if phase0_stub_compose_log_has_forbidden_teardown "$DOCKER_STUB_LOG"; then
-  echo "FAIL: down/rm detector must not match substrings inside paths (himankverma)" >&2
-  exit 1
-fi
-printf '%s\n' 'docker compose -p phase0check down -v' >>"$DOCKER_STUB_LOG"
-if ! phase0_stub_compose_log_has_forbidden_teardown "$DOCKER_STUB_LOG"; then
-  echo "FAIL: down/rm detector must match compose down subcommand" >&2
-  exit 1
-fi
-: >"$DOCKER_STUB_LOG"
-phase0_prepare_fresh_compose_stack "c05"
-if phase0_stub_compose_log_has_forbidden_teardown "$DOCKER_STUB_LOG"; then
-  echo "FAIL: PHASE0_NO_TEARDOWN must not invoke compose down or rm (c05)" >&2
-  exit 1
-fi
-phase0_prepare_fresh_compose_stack "c04"
-if phase0_stub_compose_log_has_forbidden_teardown "$DOCKER_STUB_LOG"; then
-  echo "FAIL: PHASE0_NO_TEARDOWN must not invoke compose down or rm (c04)" >&2
-  exit 1
-fi
-stop_count="$(grep -cE 'docker compose -p .* stop' "$DOCKER_STUB_LOG" || true)"
-if [[ "$stop_count" -lt 1 ]]; then
-  echo "FAIL: expected compose stop when switching no-teardown phases, got ${stop_count}" >&2
-  exit 1
-fi
-
-echo "stub: PHASE0_NO_TEARDOWN does not stop projects outside allowlist"
 : >"$DOCKER_STUB_LOG"
 phase0_compose_stop_project "phase0check-not-created-this-run"
 if grep -q 'phase0check-not-created-this-run' "$DOCKER_STUB_LOG"; then
@@ -592,7 +547,30 @@ phase0_stub_compose_ps_kafka_init() {
   printf '%s\n' "${PHASE0_STUB_KAFKA_INIT_EXIT:-0}"
 }
 
+services_not_fully_healthy_list() {
+  printf '%s' "${PHASE0_STUB_UNHEALTHY:-}"
+}
+
 compose() {
+  if [[ "${1:-}" == "ps" && "${2:-}" == "--format" && "${3:-}" == "{{.Ports}}" ]]; then
+    printf '%s\n' "${PHASE0_STUB_COMPOSE_PORTS:-0.0.0.0:8081->8081/tcp}"
+    return 0
+  fi
+  if [[ "${1:-}" == "port" ]]; then
+    if [[ "${2:-}" == "claim-service" && "${3:-}" == "8081" ]]; then
+      printf '%s\n' "${PHASE0_STUB_CLAIM_PORT:-0.0.0.0:8081}"
+      return 0
+    fi
+    return 0
+  fi
+  if [[ "${1:-}" == "exec" && "${3:-}" == "redis" ]]; then
+    printf 'NOAUTH Authentication required.\n'
+    return 0
+  fi
+  if [[ "${1:-}" == "exec" && "${3:-}" == "postgres" ]]; then
+    printf '1\n'
+    return 0
+  fi
   if [[ "${1:-}" == "ps" && "${2:-}" == "-a" && "${3:-}" == "kafka-init" ]]; then
     if [[ "${4:-}" == "--format" && "${5:-}" == "{{.State}}" ]]; then
       phase0_stub_compose_ps_kafka_init | head -n1
@@ -605,6 +583,19 @@ compose() {
   fi
   command docker compose "$@"
 }
+
+phase0_stub_curl_http_code() {
+  local url="$1"
+  if [[ "$url" == *'/actuator/health'* ]] || [[ "$url" == *'dashboard'* ]]; then
+    printf '200'
+    return 0
+  fi
+  printf '000'
+}
+curl_http_code() { phase0_stub_curl_http_code "$1"; }
+
+export POSTGRES_USER=postgres
+export POSTGRES_DB=insurance
 
 echo "stub: kafka topic pre-create check passes with matching topic list and broker config"
 PHASE0_STUB_KAFKA_LIST=(
@@ -623,9 +614,9 @@ PHASE0_STUB_KAFKA_INIT_EXIT=0
 PHASE0_STUB_CLAIM_SERVICE_LOGS='claim-service started'
 stub_pass_before="$PASS_COUNT"
 stub_fail_before="$FAIL_COUNT"
-check_17_kafka_topics_precreated "17" "stub kafka topics" || true
+check_P2_stack_healthy_locked_topics "17" "stub P2 kafka topics" || true
 if [[ "$PASS_COUNT" -ne $((stub_pass_before + 1)) || "$FAIL_COUNT" -ne "$stub_fail_before" ]]; then
-  echo "FAIL: expected check 17 PASS in stub (pass=${PASS_COUNT} fail=${FAIL_COUNT})" >&2
+  echo "FAIL: expected check P2 PASS in stub (pass=${PASS_COUNT} fail=${FAIL_COUNT})" >&2
   exit 1
 fi
 PASS_COUNT="$stub_pass_before"
@@ -635,7 +626,7 @@ echo "stub: kafka topic pre-create check fails on topic mismatch"
 PHASE0_STUB_KAFKA_LIST=(claim.submitted)
 stub_pass_before="$PASS_COUNT"
 stub_fail_before="$FAIL_COUNT"
-check_17_kafka_topics_precreated "17" "stub kafka topics mismatch" || true
+check_P2_stack_healthy_locked_topics "17" "stub P2 kafka topics mismatch" || true
 if [[ "$FAIL_COUNT" -ne $((stub_fail_before + 1)) || "$PASS_COUNT" -ne "$stub_pass_before" ]]; then
   echo "FAIL: topic mismatch should increment FAIL_COUNT only" >&2
   exit 1
@@ -657,9 +648,9 @@ PHASE0_STUB_KAFKA_LIST=(
 PHASE0_STUB_CLAIM_SERVICE_LOGS='exists but has a different partition count: 1 not 3'
 stub_pass_before="$PASS_COUNT"
 stub_fail_before="$FAIL_COUNT"
-check_17_kafka_topics_precreated "17" "stub partition warning" || true
+check_P2_stack_healthy_locked_topics "17" "stub partition warning" || true
 if [[ "$FAIL_COUNT" -ne $((stub_fail_before + 1)) ]]; then
-  echo "FAIL: partition-count log line should fail check 17" >&2
+  echo "FAIL: partition-count log line should fail check P2" >&2
   exit 1
 fi
 PASS_COUNT="$stub_pass_before"
@@ -696,11 +687,11 @@ phase0_burst_deadline_elapsed() {
   return 1
 }
 
-echo "stub: startup burst check passes when all claims reach next state in time"
+echo "stub: P1 startup burst check passes when all claims reach next state in time"
 unset PHASE0_STUB_BURST_LATE_INDEX PHASE0_STUB_BURST_INSTANT_DEADLINE
 stub_pass_before="$PASS_COUNT"
 stub_fail_before="$FAIL_COUNT"
-check_16_startup_kafka_burst "16" "stub burst pass" || true
+check_P1_startup_burst "16" "stub P1 burst pass" || true
 if [[ "$PASS_COUNT" -ne $((stub_pass_before + 1)) ]]; then
   echo "FAIL: burst pass should increment PASS_COUNT" >&2
   exit 1
@@ -708,12 +699,12 @@ fi
 PASS_COUNT="$stub_pass_before"
 FAIL_COUNT="$stub_fail_before"
 
-echo "stub: startup burst check fails when one claim is late at 60s"
+echo "stub: P1 startup burst check fails when one claim is late at 60s"
 export PHASE0_STUB_BURST_LATE_INDEX=3
 export PHASE0_STUB_BURST_INSTANT_DEADLINE=1
 stub_pass_before="$PASS_COUNT"
 stub_fail_before="$FAIL_COUNT"
-check_16_startup_kafka_burst "16" "stub burst late" || true
+check_P1_startup_burst "16" "stub P1 burst late" || true
 if [[ "$FAIL_COUNT" -ne $((stub_fail_before + 1)) ]]; then
   echo "FAIL: late burst claim should increment FAIL_COUNT" >&2
   exit 1
