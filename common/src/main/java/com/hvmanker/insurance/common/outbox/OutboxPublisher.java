@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
-import java.util.function.Consumer;
 
 /**
  * Polls unsent outbox rows and publishes them to Kafka. {@code sent_at} is set only after the
@@ -32,24 +31,14 @@ public class OutboxPublisher {
     private final JdbcTemplate jdbcTemplate;
     private final OutboxMessageSender messageSender;
     private final long advisoryLockKey;
-    private final Consumer<Boolean> advisoryLockObserver;
 
     public OutboxPublisher(
             JdbcTemplate jdbcTemplate,
             OutboxMessageSender messageSender,
             long advisoryLockKey) {
-        this(jdbcTemplate, messageSender, advisoryLockKey, null);
-    }
-
-    public OutboxPublisher(
-            JdbcTemplate jdbcTemplate,
-            OutboxMessageSender messageSender,
-            long advisoryLockKey,
-            Consumer<Boolean> advisoryLockObserver) {
         this.jdbcTemplate = jdbcTemplate;
         this.messageSender = messageSender;
         this.advisoryLockKey = advisoryLockKey;
-        this.advisoryLockObserver = advisoryLockObserver;
     }
 
     @Scheduled(fixedDelayString = "${insurance.outbox.poll-interval-ms:1000}")
@@ -59,11 +48,7 @@ public class OutboxPublisher {
                 "SELECT pg_try_advisory_xact_lock(?)",
                 Boolean.class,
                 advisoryLockKey);
-        boolean acquired = Boolean.TRUE.equals(locked);
-        if (advisoryLockObserver != null) {
-            advisoryLockObserver.accept(acquired);
-        }
-        if (!acquired) {
+        if (!Boolean.TRUE.equals(locked)) {
             return;
         }
 
