@@ -24,11 +24,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 import static com.hvmanker.insurance.common.KafkaTopics.CLAIM_ANALYSIS_REQUESTED;
@@ -40,6 +40,7 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 public class ApprovalService {
     private static final Logger log = LoggerFactory.getLogger(ApprovalService.class);
     private static final String CLAIM_SUBMITTED_CONSUMER_GROUP = "approval-service";
+
     private final ClaimApprovalRepository approvalRepository;
     private final ClaimWorkflowRepository claimWorkflowRepository;
     private final ClaimWorkflowStore claimWorkflowStore;
@@ -47,6 +48,7 @@ public class ApprovalService {
     private final OutboxWriter outboxWriter;
     private final ObjectMapper objectMapper;
     private final DecisionConflictRecorder decisionConflictRecorder;
+    private final TransactionTemplate transactionTemplate;
 
     public ApprovalService(
             ClaimApprovalRepository approvalRepository,
@@ -55,7 +57,8 @@ public class ApprovalService {
             InboxGuard inboxGuard,
             OutboxWriter outboxWriter,
             ObjectMapper objectMapper,
-            DecisionConflictRecorder decisionConflictRecorder) {
+            DecisionConflictRecorder decisionConflictRecorder,
+            TransactionTemplate transactionTemplate) {
         this.approvalRepository = approvalRepository;
         this.claimWorkflowRepository = claimWorkflowRepository;
         this.claimWorkflowStore = claimWorkflowStore;
@@ -63,6 +66,7 @@ public class ApprovalService {
         this.outboxWriter = outboxWriter;
         this.objectMapper = objectMapper;
         this.decisionConflictRecorder = decisionConflictRecorder;
+        this.transactionTemplate = transactionTemplate;
     }
 
     @Transactional
@@ -90,28 +94,54 @@ public class ApprovalService {
         appendOutbox(outboxEventId, event.claimId(), CLAIM_ANALYSIS_REQUESTED, analysisRequested);
     }
 
-    @Transactional
-    public void decide(
+    public DecisionResult recordHumanDecision(UUID claimId, InternalDecisionRequest request) {
+        ClaimWorkflow workflow = claimWorkflowRepository.findById(claimId).orElse(null);
+        if (workflow != null) {
+            InternalDecisionValidator.validate(request, workflow.getClaimedAmount());
+        }
+        ApprovalDecision action = InternalDecisionValidator.parseAction(request.action());
+        return transactionTemplate.execute(status -> decide(
+                claimId,
+                action,
+                new DecidedBy(request.decidedBy().userId(), request.decidedBy().role()),
+                request.approvedAmount(),
+                request.reason()));
+    }
+
+    public void handleManualClaimDecision(
+            UUID claimId,
+            ApprovalDecision action,
+            DecidedBy decidedBy,
+            String reason) {
+        transactionTemplate.executeWithoutResult(status -> {
+            DecisionResult result = decide(claimId, action, decidedBy, null, reason);
+            if (result == DecisionResult.CONFLICT) {
+                return;
+            }
+            if (result == DecisionResult.NOT_FOUND) {
+                throw new IllegalStateException("manual decision for missing claim " + claimId);
+            }
+        });
+    }
+
+    public DecisionResult decide(
             UUID claimId,
             ApprovalDecision action,
             DecidedBy decidedBy,
             BigDecimal approvedAmount,
             String reason) {
         String targetStatus = action == ApprovalDecision.APPROVED ? WorkflowStatus.APPROVED : WorkflowStatus.REJECTED;
-        int updated = claimWorkflowStore.transitionStatus(
-                claimId,
-                targetStatus,
-                List.of(WorkflowStatus.ANALYSIS_PENDING, WorkflowStatus.REVIEW_READY));
+        int updated = claimWorkflowStore.transitionDecidedStatus(claimId, targetStatus);
         if (updated == 0) {
-            if (!claimWorkflowStore.existsByClaimId(claimId)) {
-                throw new ClaimWorkflowNotFoundException();
+            if (!claimWorkflowRepository.existsById(claimId)) {
+                return DecisionResult.NOT_FOUND;
             }
             decisionConflictRecorder.recordHumanLostConflict(
                     claimId,
                     decidedBy.userId(),
                     decidedBy.role(),
                     action);
-            throw new ClaimAlreadyDecidedException();
+            return DecisionResult.CONFLICT;
         }
 
         ClaimWorkflow workflow = claimWorkflowRepository.findById(claimId).orElseThrow();
@@ -150,7 +180,7 @@ public class ApprovalService {
                             decidedBy,
                             null,
                             decidedAt));
-            return;
+            return DecisionResult.DECIDED;
         }
         appendOutbox(
                 outboxEventId,
@@ -164,24 +194,9 @@ public class ApprovalService {
                         reason,
                         decidedBy,
                         decidedAt));
+        return DecisionResult.DECIDED;
     }
 
-    @Transactional
-    public void recordHumanDecision(UUID claimId, InternalDecisionRequest request) {
-        ClaimWorkflow workflow = claimWorkflowRepository.findById(claimId).orElse(null);
-        if (workflow != null) {
-            InternalDecisionValidator.validate(request, workflow.getClaimedAmount());
-        }
-        ApprovalDecision action = InternalDecisionValidator.parseAction(request.action());
-        decide(
-                claimId,
-                action,
-                new DecidedBy(request.decidedBy().userId(), request.decidedBy().role()),
-                request.approvedAmount(),
-                request.reason());
-    }
-
-    @Transactional(readOnly = true)
     public InternalDecisionLookupResponse lookupDecision(UUID decisionId) {
         ClaimApproval approval = approvalRepository.findByDecisionId(decisionId)
                 .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Decision not found"));

@@ -1,7 +1,7 @@
 package com.hvmanker.insurance.approval.web;
 
 import com.hvmanker.insurance.approval.service.ApprovalService;
-import jakarta.validation.Valid;
+import com.hvmanker.insurance.approval.service.DecisionResult;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,11 +22,15 @@ public class InternalDecisionController {
     }
 
     @PostMapping("/claims/{claimId}/decisions")
-    public ResponseEntity<Void> recordDecision(
+    public ResponseEntity<?> recordDecision(
             @PathVariable UUID claimId,
-            @Valid @RequestBody InternalDecisionRequest request) {
-        approvalService.recordHumanDecision(claimId, request);
-        return ResponseEntity.ok().build();
+            @RequestBody InternalDecisionRequest request) {
+        DecisionResult result = approvalService.recordHumanDecision(claimId, request);
+        return switch (result) {
+            case DECIDED -> ResponseEntity.ok().build();
+            case CONFLICT -> ResponseEntity.status(409).body(ErrorResponse.claimAlreadyDecided());
+            case NOT_FOUND -> ResponseEntity.status(404).body(ErrorResponse.claimNotFound());
+        };
     }
 
     @GetMapping("/decisions/{decisionId}")
