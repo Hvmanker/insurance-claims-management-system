@@ -61,26 +61,13 @@ services:
         topics_file=/kafka/topics.txt
         bootstrap=kafka:9092
         kafka_topics=/opt/kafka/bin/kafka-topics.sh
-        i=0
-        while ! "$$kafka_topics" --bootstrap-server "$$bootstrap" --list >/dev/null 2>&1; do
-          i=$$((i + 1))
-          if (( i > 120 )); then
-            echo "kafka-init: broker not reachable at $$bootstrap" >&2
-            exit 1
-          fi
-          sleep 1
-        done
         while IFS= read -r topic || [[ -n "$$topic" ]]; do
-          topic="$${topic%$$'\r'}"
-          topic="$${topic#"$${topic%%[![:space:]]*}"}"
-          topic="$${topic%"$${topic##*[![:space:]]}"}"
           [[ -z "$$topic" ]] && continue
           "$$kafka_topics" --bootstrap-server "$$bootstrap" --create --if-not-exists \
             --topic "$$topic" --partitions 3 --replication-factor 1
           desc="$$("$$kafka_topics" --bootstrap-server "$$bootstrap" --describe --topic "$$topic")"
-          partition_count="$$(printf '%s\n' "$$desc" | grep -cE '^[[:space:]]*Partition:[[:space:]]*[0-9]+' || true)"
-          if [[ "$$partition_count" != "3" ]]; then
-            echo "kafka-init: topic $$topic has $$partition_count partition(s), expected exactly 3 (no in-place raise; down -v and fresh start)" >&2
+          if ! grep -q 'PartitionCount: 3' <<< "$$desc"; then
+            echo "kafka-init: topic $$topic missing PartitionCount: 3 (no in-place raise; down -v and fresh start)" >&2
             printf '%s\n' "$$desc" >&2
             exit 1
           fi
