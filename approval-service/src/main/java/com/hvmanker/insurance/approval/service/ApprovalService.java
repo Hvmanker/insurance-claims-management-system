@@ -14,6 +14,7 @@ import com.hvmanker.insurance.approval.domain.DecisionAuditRepository;
 import com.hvmanker.insurance.approval.domain.WorkflowStatus;
 import com.hvmanker.insurance.approval.web.InternalDecisionLookupResponse;
 import com.hvmanker.insurance.approval.web.InternalDecisionRequest;
+import com.hvmanker.insurance.common.events.ClaimAnalysisCompletedEvent;
 import com.hvmanker.insurance.common.events.ClaimAnalysisRequestedEvent;
 import com.hvmanker.insurance.common.events.ClaimApprovedEvent;
 import com.hvmanker.insurance.common.events.ClaimRejectedEvent;
@@ -24,6 +25,7 @@ import com.hvmanker.insurance.common.logging.EventMdc;
 import com.hvmanker.insurance.common.outbox.OutboxWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -42,6 +44,8 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 public class ApprovalService {
     private static final Logger log = LoggerFactory.getLogger(ApprovalService.class);
     private static final String CLAIM_SUBMITTED_CONSUMER_GROUP = "approval-service";
+    private static final String ANALYSIS_COMPLETED_CONSUMER_GROUP = "approval-service-analysis-completed";
+    private static final String AUTO_APPROVAL_REASON = "automatic approval";
     private static final String OUTCOME_CONFLICT = "CONFLICT";
     private static final String REASON_CLAIM_ALREADY_DECIDED = "CLAIM_ALREADY_DECIDED";
 
@@ -52,6 +56,7 @@ public class ApprovalService {
     private final OutboxWriter outboxWriter;
     private final ObjectMapper objectMapper;
     private final DecisionAuditRepository decisionAuditRepository;
+    private final BigDecimal autoApprovalLimit;
     private final TransactionTemplate transactionTemplate;
 
     public ApprovalService(
@@ -62,6 +67,7 @@ public class ApprovalService {
             OutboxWriter outboxWriter,
             ObjectMapper objectMapper,
             DecisionAuditRepository decisionAuditRepository,
+            @Value("${claims.auto-approval-limit:10000.00}") BigDecimal autoApprovalLimit,
             TransactionTemplate transactionTemplate) {
         this.approvalRepository = approvalRepository;
         this.claimWorkflowRepository = claimWorkflowRepository;
@@ -70,6 +76,7 @@ public class ApprovalService {
         this.outboxWriter = outboxWriter;
         this.objectMapper = objectMapper;
         this.decisionAuditRepository = decisionAuditRepository;
+        this.autoApprovalLimit = autoApprovalLimit;
         this.transactionTemplate = transactionTemplate;
     }
 
@@ -96,6 +103,44 @@ public class ApprovalService {
                 event.claimId(),
                 event.estimatedAmount());
         appendOutbox(outboxEventId, event.claimId(), CLAIM_ANALYSIS_REQUESTED, analysisRequested);
+    }
+
+    public void handleAnalysisCompleted(ClaimAnalysisCompletedEvent event, UUID eventId) {
+        if (!inboxGuard.firstTime(ANALYSIS_COMPLETED_CONSUMER_GROUP, eventId)) {
+            EventMdc.logDuplicateSkipped(log, event.claimId(), eventId);
+            return;
+        }
+
+        ClaimWorkflow workflow = claimWorkflowRepository.findById(event.claimId()).orElse(null);
+        if (workflow == null) {
+            return;
+        }
+
+        boolean autoEligible = workflow.getClaimedAmount().compareTo(autoApprovalLimit) <= 0
+                && event.flags().isEmpty();
+        if (autoEligible) {
+            int updated = claimWorkflowStore.transitionFromAnalysisPending(
+                    event.claimId(),
+                    WorkflowStatus.APPROVED);
+            if (updated == 0) {
+                logLateAnalysisIgnored(event.claimId(), eventId, workflow.getStatus());
+                recordConflict(
+                        event.claimId(),
+                        DecidedBy.AUTO_APPROVAL.userId(),
+                        DecidedBy.AUTO_APPROVAL.role(),
+                        ApprovalDecision.APPROVED);
+                return;
+            }
+            persistAutoApproval(workflow);
+            return;
+        }
+
+        int updated = claimWorkflowStore.transitionFromAnalysisPending(
+                event.claimId(),
+                WorkflowStatus.REVIEW_READY);
+        if (updated == 0) {
+            logLateAnalysisIgnored(event.claimId(), eventId, workflow.getStatus());
+        }
     }
 
     public DecisionResult recordHumanDecision(UUID claimId, InternalDecisionRequest request) {
@@ -146,6 +191,45 @@ public class ApprovalService {
         }
 
         ClaimWorkflow workflow = claimWorkflowRepository.findById(claimId).orElseThrow();
+        writeDecision(
+                workflow,
+                action,
+                decidedBy,
+                approvedAmount,
+                reason,
+                ApprovalSource.HUMAN);
+        return DecisionResult.DECIDED;
+    }
+
+    public InternalDecisionLookupResponse lookupDecision(UUID decisionId) {
+        ClaimApproval approval = approvalRepository.findByDecisionId(decisionId)
+                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Decision not found"));
+        return new InternalDecisionLookupResponse(
+                approval.getDecisionId(),
+                approval.getClaimId(),
+                approval.getDecision().name(),
+                approval.getApprovedAmount(),
+                new DecidedBy(approval.getDecidedByUserId(), approval.getDecidedByRole()));
+    }
+
+    private void persistAutoApproval(ClaimWorkflow workflow) {
+        writeDecision(
+                workflow,
+                ApprovalDecision.APPROVED,
+                DecidedBy.AUTO_APPROVAL,
+                workflow.getClaimedAmount(),
+                AUTO_APPROVAL_REASON,
+                ApprovalSource.AUTO);
+    }
+
+    private void writeDecision(
+            ClaimWorkflow workflow,
+            ApprovalDecision action,
+            DecidedBy decidedBy,
+            BigDecimal approvedAmount,
+            String reason,
+            ApprovalSource source) {
+        UUID claimId = workflow.getClaimId();
         UUID decisionId = UUID.randomUUID();
         Instant decidedAt = Instant.now();
         BigDecimal resolvedApprovedAmount = action == ApprovalDecision.APPROVED
@@ -162,7 +246,7 @@ public class ApprovalService {
                 decisionId,
                 decidedBy.userId(),
                 decidedBy.role(),
-                ApprovalSource.HUMAN);
+                source);
         approvalRepository.save(approval);
 
         UUID outboxEventId = UUID.randomUUID();
@@ -181,7 +265,7 @@ public class ApprovalService {
                             decidedBy,
                             null,
                             decidedAt));
-            return DecisionResult.DECIDED;
+            return;
         }
         appendOutbox(
                 outboxEventId,
@@ -195,18 +279,10 @@ public class ApprovalService {
                         reason,
                         decidedBy,
                         decidedAt));
-        return DecisionResult.DECIDED;
     }
 
-    public InternalDecisionLookupResponse lookupDecision(UUID decisionId) {
-        ClaimApproval approval = approvalRepository.findByDecisionId(decisionId)
-                .orElseThrow(() -> new ResponseStatusException(NOT_FOUND, "Decision not found"));
-        return new InternalDecisionLookupResponse(
-                approval.getDecisionId(),
-                approval.getClaimId(),
-                approval.getDecision().name(),
-                approval.getApprovedAmount(),
-                new DecidedBy(approval.getDecidedByUserId(), approval.getDecidedByRole()));
+    private void logLateAnalysisIgnored(UUID claimId, UUID eventId, String status) {
+        log.info("late analysis ignored claimId={} eventId={} status={}", claimId, eventId, status);
     }
 
     private void recordConflict(
