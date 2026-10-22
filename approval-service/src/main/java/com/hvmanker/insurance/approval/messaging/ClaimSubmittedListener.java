@@ -6,6 +6,8 @@ import com.hvmanker.insurance.common.logging.EventMdc;
 import com.hvmanker.insurance.common.outbox.OutboxMessageSender;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,6 +19,8 @@ import static com.hvmanker.insurance.common.KafkaTopics.CLAIM_SUBMITTED;
 
 @Component
 public class ClaimSubmittedListener {
+    private static final Logger log = LoggerFactory.getLogger(ClaimSubmittedListener.class);
+
     private final ApprovalService approvalService;
 
     public ClaimSubmittedListener(ApprovalService approvalService) {
@@ -38,7 +42,8 @@ public class ClaimSubmittedListener {
         if (header != null && header.value() != null && header.value().length > 0) {
             return UUID.fromString(new String(header.value(), StandardCharsets.UTF_8));
         }
+        log.warn("claim.submitted without eventId claimId={}", event.claimId());
         return UUID.nameUUIDFromBytes(
-                (event.claimId() + "|" + event.submittedAt()).getBytes(StandardCharsets.UTF_8));
+                ("claim.submitted:" + event.claimId()).getBytes(StandardCharsets.UTF_8));
     }
 }
