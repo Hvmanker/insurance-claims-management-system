@@ -1,5 +1,7 @@
 package com.hvmanker.insurance.common.outbox;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -13,12 +15,12 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 /**
- * Polls unsent outbox rows and publishes them to Kafka. The message key is {@code aggregate_id}
- * (the claim id) as a string so all events for a claim stay ordered on one partition. The only
- * record header is {@code eventId}. {@code sent_at} is set only after the broker acknowledges
- * the send ({@code Future#get} completes successfully).
+ * Polls unsent outbox rows and publishes them to Kafka. {@code sent_at} is set only after the
+ * broker acknowledges the send ({@code Future#get} completes successfully).
  */
 public class OutboxPublisher {
+
+    private static final Logger log = LoggerFactory.getLogger(OutboxPublisher.class);
 
     private static final RowMapper<OutboxRecord> OUTBOX_ROW_MAPPER = (ResultSet rs, int rowNum) -> new OutboxRecord(
             rs.getLong("id"),
@@ -80,9 +82,12 @@ public class OutboxPublisher {
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 return;
-            } catch (ExecutionException | TimeoutException exception) {
-                return;
-            } catch (RuntimeException exception) {
+            } catch (ExecutionException | TimeoutException | RuntimeException exception) {
+                log.warn(
+                        "outbox publish failed outboxId={} eventId={}",
+                        record.id(),
+                        record.eventId(),
+                        exception);
                 return;
             }
         }
