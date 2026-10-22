@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InternalApiTokenStartupTest {
     @Configuration
-    @Import(InternalApiSecurityConfig.class)
+    @Import(InternalApiTokenFilter.class)
     static class FilterScanConfiguration {
     }
 

@@ -10,7 +10,7 @@ import com.hvmanker.insurance.approval.domain.ClaimWorkflowRepository;
 import com.hvmanker.insurance.approval.domain.ClaimWorkflowStore;
 import com.hvmanker.insurance.approval.domain.WorkflowStatus;
 import com.hvmanker.insurance.approval.service.ApprovalService;
-import com.hvmanker.insurance.approval.service.DecisionConflictRecorder;
+import com.hvmanker.insurance.approval.domain.DecisionAuditRepository;
 import com.hvmanker.insurance.common.events.ClaimSubmittedEvent;
 import com.hvmanker.insurance.common.inbox.InboxGuard;
 import com.hvmanker.insurance.common.outbox.OutboxWriter;
@@ -62,7 +62,7 @@ class ClaimSubmittedListenerTest {
     private ObjectMapper objectMapper;
 
     @Mock
-    private DecisionConflictRecorder decisionConflictRecorder;
+    private DecisionAuditRepository decisionAuditRepository;
 
     @Mock
     private TransactionTemplate transactionTemplate;
@@ -84,7 +84,7 @@ class ClaimSubmittedListenerTest {
                 inboxGuard,
                 outboxWriter,
                 objectMapper,
-                decisionConflictRecorder,
+                decisionAuditRepository,
                 transactionTemplate);
         listener = new ClaimSubmittedListener(approvalService);
 

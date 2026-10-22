@@ -14,12 +14,12 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 @Component
-public class InternalApiSecurityConfig extends OncePerRequestFilter {
+public class InternalApiTokenFilter extends OncePerRequestFilter {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final byte[] expectedTokenBytes;
 
-    public InternalApiSecurityConfig(@Value("${INTERNAL_API_TOKEN:}") String internalApiToken) {
+    public InternalApiTokenFilter(@Value("${INTERNAL_API_TOKEN:}") String internalApiToken) {
         if (internalApiToken == null || internalApiToken.isBlank()) {
             throw new IllegalStateException("INTERNAL_API_TOKEN must be configured with a non-blank value");
         }
