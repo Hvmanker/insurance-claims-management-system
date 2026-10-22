@@ -1,6 +1,5 @@
 package com.hvmanker.insurance.common.outbox;
 
-import java.time.Instant;
 import java.util.UUID;
 
 public record OutboxRecord(
@@ -8,7 +7,5 @@ public record OutboxRecord(
         UUID eventId,
         UUID aggregateId,
         String topic,
-        String payload,
-        Instant createdAt,
-        Instant sentAt) {
+        String payload) {
 }

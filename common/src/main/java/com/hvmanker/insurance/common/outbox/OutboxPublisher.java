@@ -25,9 +25,7 @@ public class OutboxPublisher {
             rs.getObject("event_id", UUID.class),
             rs.getObject("aggregate_id", UUID.class),
             rs.getString("topic"),
-            rs.getString("payload"),
-            rs.getObject("created_at", Instant.class),
-            rs.getObject("sent_at", Instant.class));
+            rs.getString("payload"));
 
     private final JdbcTemplate jdbcTemplate;
     private final OutboxMessageSender messageSender;
@@ -69,7 +67,7 @@ public class OutboxPublisher {
 
         List<OutboxRecord> pending = jdbcTemplate.query(
                 """
-                SELECT id, event_id, aggregate_id, topic, payload::text AS payload, created_at, sent_at
+                SELECT id, event_id, aggregate_id, topic, payload::text AS payload
                 FROM outbox
                 WHERE sent_at IS NULL
                 ORDER BY id
