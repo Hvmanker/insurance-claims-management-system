@@ -8,8 +8,9 @@
   --navy: #102a43;
   --teal: #087e8b;
   --lime: #61a60e;
-  --amber: #b45309;
+  --amber: #bd7410;
   --purple: #9333ea;
+  --status-review: #b45309;
   --red: #c2413b;
   --blue: #2563aa;
 }
@@ -93,7 +94,7 @@ td.claimant { font-weight: 800; color: var(--ink); } td.claimant span { display:
 .status-badge.REJECTED { background: #fce7e5; color: #a8312d; }
 .status-badge.SETTLED { background: #ebf7d9; color: #3f6212; }
 .status-dot.analysis-pending { background: var(--purple); }
-.status-dot.review-ready { background: var(--amber); }
+.status-dot.review-ready { background: var(--status-review); }
 .empty-state { margin: 0; padding: 44px 20px; text-align: center; color: var(--muted); font-size: 13px; }
 .submission-panel { padding: 20px; }
 .submission-panel form { display: grid; gap: 15px; margin-top: 20px; }
