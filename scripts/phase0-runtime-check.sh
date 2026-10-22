@@ -537,18 +537,67 @@ compose_port_is_published() {
   [[ -n "$mapping" ]] && [[ "$mapping" != *:0 ]]
 }
 
+phase0_stamp_field() {
+  local key="$1" stamp_file="${REPO_ROOT}/STAMP.txt" line value alt_key=""
+  [[ "$key" == "commit" ]] && alt_key="tip"
+  if [[ -f "$stamp_file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      [[ "$line" =~ ^[[:space:]]*${key}[[:space:]]*=[[:space:]]*(.+)$ ]] && value="${BASH_REMATCH[1]}"
+      [[ "$line" =~ ^[[:space:]]*${key}[[:space:]]+(.+)$ ]] && value="${BASH_REMATCH[1]}"
+      if [[ -n "$alt_key" ]]; then
+        [[ "$line" =~ ^[[:space:]]*${alt_key}[[:space:]]*=[[:space:]]*(.+)$ ]] && value="${BASH_REMATCH[1]}"
+        [[ "$line" =~ ^[[:space:]]*${alt_key}[[:space:]]+(.+)$ ]] && value="${BASH_REMATCH[1]}"
+      fi
+    done < "$stamp_file"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    [[ -n "$value" ]] && printf '%s' "$value"
+  fi
+}
+
 log_repo_git_state() {
-  local head porcelain
-  head="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
-  porcelain="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null || true)"
-  log_line "git rev-parse HEAD: ${head}"
-  log_line "git status --porcelain"
-  if [[ -z "$porcelain" ]]; then
-    log_line "(clean)"
+  local head tree tarball_sha256 porcelain stamp_commit stamp_tree stamp_tarball
+  if [[ -d "${REPO_ROOT}/.git" ]]; then
+    head="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+    tree="$(git -C "$REPO_ROOT" rev-parse 'HEAD^{tree}' 2>/dev/null || echo unknown)"
+    log_line "git rev-parse HEAD: ${head}"
+    log_line "git rev-parse HEAD^{tree}: ${tree}"
+    porcelain="$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null || true)"
+    log_line "git status --porcelain"
+    if [[ -z "$porcelain" ]]; then
+      log_line "(clean)"
+    else
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && log_line "$line"
+      done <<< "$porcelain"
+    fi
+    return
+  fi
+
+  head="${CLAIMS_COMMIT:-}"
+  tree="${CLAIMS_TREE:-}"
+  tarball_sha256="${CLAIMS_TARBALL_SHA256:-}"
+  stamp_commit="$(phase0_stamp_field commit)"
+  stamp_tree="$(phase0_stamp_field tree)"
+  stamp_tarball="$(phase0_stamp_field tarball_sha256)"
+  [[ -z "$head" && -n "$stamp_commit" ]] && head="$stamp_commit"
+  [[ -z "$tree" && -n "$stamp_tree" ]] && tree="$stamp_tree"
+  [[ -z "$tarball_sha256" && -n "$stamp_tarball" ]] && tarball_sha256="$stamp_tarball"
+
+  if [[ -n "$head" ]]; then
+    log_line "claims commit: ${head}"
   else
-    while IFS= read -r line; do
-      [[ -n "$line" ]] && log_line "$line"
-    done <<< "$porcelain"
+    log_line "claims commit: UNKNOWN (no .git, CLAIMS_COMMIT, or STAMP.txt commit)"
+  fi
+  if [[ -n "$tree" ]]; then
+    log_line "claims tree: ${tree}"
+  else
+    log_line "claims tree: UNKNOWN (no .git, CLAIMS_TREE, or STAMP.txt tree)"
+  fi
+  if [[ -n "$tarball_sha256" ]]; then
+    log_line "claims tarball sha256: ${tarball_sha256}"
+  else
+    log_line "claims tarball sha256: UNKNOWN (no CLAIMS_TARBALL_SHA256 or STAMP.txt tarball_sha256)"
   fi
 }
 
