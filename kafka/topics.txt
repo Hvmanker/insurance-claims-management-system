@@ -1,0 +1,8 @@
+claim.submitted
+claim.approved
+claim.rejected
+claim.settled
+claim.analysis.requested
+claim.analysis.completed
+claim.manual-decision
+claim.approved.DLT
