@@ -893,7 +893,13 @@ register_insured() {
   [[ "$code" == "201" || "$code" == "200" ]]
 }
 
-readonly CHECK_06_CLAIM_AMOUNT="1500.00"
+readonly CHECK_06_CLAIM_AMOUNT="15000.00"
+readonly PHASE0_BURST_CLAIM_COUNT=12
+readonly PHASE0_BURST_CLAIM_AMOUNT="1000.00"
+readonly PHASE0_BURST_DEADLINE_SEC=60
+readonly PHASE0_EXTRA_GATE_CHECKS=2
+readonly PHASE0_KAFKA_TOPICS_FILE="${REPO_ROOT}/kafka/topics.txt"
+readonly PHASE0_KAFKA_BROKER_ID="${PHASE0_KAFKA_BROKER_ID:-1}"
 
 submit_claim() {
   local jar="$1" amount="$2"
@@ -926,6 +932,191 @@ claim_status() {
 
 claim_id_from_submit() {
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "${PHASE0_CURL_BODY}" 2>/dev/null
+}
+
+phase0_kafka_topics_sh() {
+  compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 "$@"
+}
+
+phase0_kafka_configs_sh() {
+  compose exec -T kafka /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092 "$@"
+}
+
+phase0_expected_kafka_topics_sorted() {
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    printf '%s\n' "$line"
+  done < "${PHASE0_KAFKA_TOPICS_FILE}" | LC_ALL=C sort
+}
+
+phase0_kafka_topics_list_sorted() {
+  phase0_kafka_topics_sh --list 2>/dev/null | grep -vE '^__' | LC_ALL=C sort
+}
+
+phase0_kafka_claim_submitted_partition() {
+  local claim_id="$1"
+  python3 - "$claim_id" <<'PY'
+import sys
+
+def murmur2(data: bytes) -> int:
+    length = len(data)
+    seed = 0x9747b28c
+    m = 0x5bd1e995
+    r = 24
+    h = seed ^ length
+    length4 = length // 4
+    for i in range(length4):
+        k = int.from_bytes(data[i * 4 : i * 4 + 4], "little", signed=False)
+        k = (k * m) & 0xFFFFFFFF
+        k ^= k >> r
+        k = (k * m) & 0xFFFFFFFF
+        h = (h * m) & 0xFFFFFFFF
+        h ^= k
+    remaining = length % 4
+    if remaining:
+        k = 0
+        offset = length4 * 4
+        if remaining >= 3:
+            k ^= data[offset + 2] << 16
+        if remaining >= 2:
+            k ^= data[offset + 1] << 8
+        k ^= data[offset]
+        k = (k * m) & 0xFFFFFFFF
+        h ^= k
+    h ^= length
+    h ^= h >> 13
+    h = (h * m) & 0xFFFFFFFF
+    h ^= h >> 15
+    return h & 0x7FFFFFFF
+
+claim_id = sys.argv[1]
+print(murmur2(claim_id.encode("utf-8")) % 3)
+PY
+}
+
+phase0_burst_submit_claim() {
+  local jar="$1" index="$2"
+  local body code
+  body="$(printf '{"policyNumber":"POL-PHASE0-BURST-%02d","claimType":"AUTO","reason":"Phase0 startup burst","description":"Burst claim %02d","estimatedAmount":%s}' \
+    "$index" "$index" "${PHASE0_BURST_CLAIM_AMOUNT}")"
+  code="$(curl_json POST "${BASE_URL}/claims" "$jar" "$body")"
+  [[ "$code" == "201" ]]
+}
+
+phase0_burst_claim_reached_next_state() {
+  local status="$1"
+  [[ "$status" == "APPROVED" || "$status" == "SETTLED" ]]
+}
+
+phase0_burst_wait_next_state() {
+  local jar="$1" claim_id="$2" start_epoch="$3" index="$4"
+  local status="" now=0 elapsed=0
+
+  if [[ -n "${PHASE0_STUB_BURST_LATE_INDEX:-}" && "$index" == "${PHASE0_STUB_BURST_LATE_INDEX}" ]]; then
+    return 1
+  fi
+
+  while true; do
+    status="$(claim_status "$jar" "$claim_id" 2>/dev/null || true)"
+    if phase0_burst_claim_reached_next_state "$status"; then
+      return 0
+    fi
+    now="$(date +%s)"
+    elapsed=$((now - start_epoch))
+    if (( elapsed >= PHASE0_BURST_DEADLINE_SEC )); then
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+check_16_startup_kafka_burst() {
+  local nn="$1" name="$2"
+  local jar_insured claim_id start_epoch i status note_parts="" partition=""
+  local -a claim_ids=()
+
+  jar_insured="$(phase0_mktemp)"
+  if ! register_insured "phase0-burst-insured@example.com" "Phase0BurstGateOnly!" \
+    "Phase0 Burst Insured" "$jar_insured"; then
+    emit_result "$nn" FAIL "$name" "burst insured registration failed (HTTP ${PHASE0_REGISTER_HTTP_CODE})"
+    return
+  fi
+
+  for i in $(seq 1 "${PHASE0_BURST_CLAIM_COUNT}"); do
+    if ! phase0_burst_submit_claim "$jar_insured" "$i"; then
+      emit_result "$nn" FAIL "$name" "burst submit claim ${i}/${PHASE0_BURST_CLAIM_COUNT} failed"
+      return
+    fi
+    claim_id="$(claim_id_from_submit)"
+    if [[ -z "$claim_id" ]]; then
+      emit_result "$nn" FAIL "$name" "burst claim ${i}: could not parse claim id"
+      return
+    fi
+    claim_ids+=("$claim_id")
+    start_epoch="$(date +%s)"
+    if ! phase0_burst_wait_next_state "$jar_insured" "$claim_id" "$start_epoch" "$i"; then
+      status="$(claim_status "$jar_insured" "$claim_id" 2>/dev/null || true)"
+      emit_result "$nn" FAIL "$name" "burst claim ${i} (${claim_id}) not APPROVED/SETTLED within ${PHASE0_BURST_DEADLINE_SEC}s (status=${status:-unknown})"
+      return
+    fi
+  done
+
+  for claim_id in "${claim_ids[@]}"; do
+    partition="$(phase0_kafka_claim_submitted_partition "$claim_id")"
+    if [[ -n "$note_parts" ]]; then
+      note_parts+=", "
+    fi
+    note_parts+="${claim_id}=p${partition}"
+  done
+  log_line "NOTE: startup burst claim.submitted partitions (informational, not a pass condition): ${note_parts}"
+  emit_result "$nn" PASS "$name" "${PHASE0_BURST_CLAIM_COUNT} claims at ${PHASE0_BURST_CLAIM_AMOUNT} reached APPROVED or SETTLED within ${PHASE0_BURST_DEADLINE_SEC}s per claim"
+}
+
+check_17_kafka_topics_precreated() {
+  local nn="$1" name="$2"
+  local expected actual init_line init_state claim_logs topics_ok=1 broker_ok=1 init_ok=1 logs_ok=1
+
+  expected="$(phase0_expected_kafka_topics_sorted)"
+  actual="$(phase0_kafka_topics_list_sorted)"
+  if [[ "$expected" != "$actual" ]]; then
+    topics_ok=0
+    log_line "kafka topic list mismatch; expected:"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && log_line "  expected: ${line}"
+    done <<< "$expected"
+    log_line "kafka topic list actual:"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && log_line "  actual: ${line}"
+    done <<< "$actual"
+  fi
+
+  if ! phase0_kafka_configs_sh --describe --entity-type brokers --entity-name "${PHASE0_KAFKA_BROKER_ID}" --all 2>/dev/null \
+    | grep -qE 'auto\.create\.topics\.enable=false'; then
+    broker_ok=0
+  fi
+
+  init_state="$(compose ps -a kafka-init --format '{{.State}}' 2>/dev/null | head -n1 || true)"
+  init_exit="$(compose ps -a kafka-init --format '{{.ExitCode}}' 2>/dev/null | head -n1 || true)"
+  init_state_lc="$(printf '%s' "$init_state" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$init_state_lc" != "exited" || "$init_exit" != "0" ]]; then
+    init_ok=0
+    log_line "kafka-init state=${init_state:-<missing>} exit=${init_exit:-<missing>}"
+  fi
+
+  claim_logs="$(claim_service_compose_logs)"
+  if grep -q 'different partition count' <<<"$claim_logs" 2>/dev/null; then
+    logs_ok=0
+  fi
+
+  if [[ "$topics_ok" -eq 1 && "$broker_ok" -eq 1 && "$init_ok" -eq 1 && "$logs_ok" -eq 1 ]]; then
+    emit_result "$nn" PASS "$name" "topics match kafka/topics.txt; auto.create.topics.enable=false; kafka-init Exited (0); no partition-count warnings in claim-service logs"
+  else
+    emit_result "$nn" FAIL "$name" "topics_ok=${topics_ok} broker_ok=${broker_ok} kafka_init_ok=${init_ok} claim_logs_ok=${logs_ok}"
+  fi
 }
 
 has_tm_b_kafka_integration_test() {
@@ -1322,7 +1513,9 @@ run_all_checks() {
 }
 
 print_summary() {
-  log_line "SUMMARY pass=${PASS_COUNT} fail=${FAIL_COUNT} skipped=${SKIP_COUNT} total=${#CHECKS[@]}"
+  local total_checks
+  total_checks=$((${#CHECKS[@]} + PHASE0_EXTRA_GATE_CHECKS))
+  log_line "SUMMARY pass=${PASS_COUNT} fail=${FAIL_COUNT} skipped=${SKIP_COUNT} total=${total_checks}"
 }
 
 list_checks() {
@@ -1367,13 +1560,17 @@ main() {
     log_line "WARN: initial stack readiness timed out (health and/or claim-service HTTP); running checks anyway"
   fi
 
+  check_16_startup_kafka_burst "16" "Startup burst: ${PHASE0_BURST_CLAIM_COUNT} under-10k claims reach APPROVED or SETTLED within ${PHASE0_BURST_DEADLINE_SEC}s of each submit"
+  check_17_kafka_topics_precreated "17" "Kafka topics pre-created (3 partitions, auto-create off, kafka-init succeeded)"
+
   run_all_checks
   print_summary
   if phase0_no_teardown_enabled; then
     phase0_log_no_teardown_closing_note
   fi
 
-  if [[ "$FAIL_COUNT" -eq 0 && "$SKIP_COUNT" -eq 0 && "$PASS_COUNT" -eq ${#CHECKS[@]} ]]; then
+  if [[ "$FAIL_COUNT" -eq 0 && "$SKIP_COUNT" -eq 0 \
+    && "$PASS_COUNT" -eq $((${#CHECKS[@]} + PHASE0_EXTRA_GATE_CHECKS)) ]]; then
     exit 0
   fi
   exit 1
