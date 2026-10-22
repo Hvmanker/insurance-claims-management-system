@@ -27,11 +27,17 @@
               "format": "uuid"
             },
             "claimedAmount": {
-              "$ref": "../../money.schema.json#/$defs/moneyAmount"
+              "$ref": "#/$defs/moneyAmount"
             }
           }
         }
       }
     }
-  ]
+  ],
+  "$defs": {
+    "moneyAmount": {
+      "type": "string",
+      "pattern": "^\\d+(\\.\\d{1,2})?$"
+    }
+  }
 }
