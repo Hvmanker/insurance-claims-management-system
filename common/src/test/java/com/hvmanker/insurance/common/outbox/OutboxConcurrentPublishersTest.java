@@ -4,24 +4,23 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.RepeatedTest;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
-import java.util.UUID;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
 
 import static com.hvmanker.insurance.common.outbox.SyntheticIds.AGGREGATE_A;
 import static com.hvmanker.insurance.common.outbox.SyntheticIds.eventId;
@@ -66,21 +65,16 @@ class OutboxConcurrentPublishersTest {
 
         DataSource dataSourceOne = OutboxInboxTestSupport.newDataSource();
         DataSource dataSourceTwo = OutboxInboxTestSupport.newDataSource();
-        JdbcTemplate jdbcOne = new JdbcTemplate(dataSourceOne);
-        JdbcTemplate jdbcTwo = new JdbcTemplate(dataSourceTwo);
-        TransactionTemplate txOne = new TransactionTemplate(new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSourceOne));
-        TransactionTemplate txTwo = new TransactionTemplate(new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSourceTwo));
 
         CountDownLatch releaseWhileLockHeld = new CountDownLatch(1);
         AtomicBoolean releaseTriggered = new AtomicBoolean();
         List<Boolean> publisherOneLockOutcomes = new CopyOnWriteArrayList<>();
         List<Boolean> publisherTwoLockOutcomes = new CopyOnWriteArrayList<>();
 
-        Consumer<Boolean> releaseOnContention = acquired -> {
-            if (!acquired && releaseTriggered.compareAndSet(false, true)) {
-                releaseWhileLockHeld.countDown();
-            }
-        };
+        JdbcTemplate jdbcOne = new LockRecordingJdbcTemplate(
+                dataSourceOne, publisherOneLockOutcomes, releaseWhileLockHeld, releaseTriggered);
+        JdbcTemplate jdbcTwo = new LockRecordingJdbcTemplate(
+                dataSourceTwo, publisherTwoLockOutcomes, releaseWhileLockHeld, releaseTriggered);
 
         OutboxMessageSender kafkaSender = OutboxMessageSender.kafka(kafkaTemplate, Duration.ofSeconds(30));
         OutboxMessageSender slowSender = record -> {
@@ -91,55 +85,62 @@ class OutboxConcurrentPublishersTest {
             kafkaSender.send(record);
         };
 
-        OutboxPublisher publisherOne = new OutboxPublisher(
-                jdbcOne,
-                slowSender,
-                OutboxInboxTestSupport.DEFAULT_ADVISORY_LOCK_KEY,
-                acquired -> {
-                    publisherOneLockOutcomes.add(acquired);
-                    releaseOnContention.accept(acquired);
-                });
-        OutboxPublisher publisherTwo = new OutboxPublisher(
-                jdbcTwo,
-                slowSender,
-                OutboxInboxTestSupport.DEFAULT_ADVISORY_LOCK_KEY,
-                acquired -> {
-                    publisherTwoLockOutcomes.add(acquired);
-                    releaseOnContention.accept(acquired);
-                });
+        AnnotationConfigApplicationContext publisherContextOne =
+                publisherContext(dataSourceOne, jdbcOne, slowSender);
+        AnnotationConfigApplicationContext publisherContextTwo =
+                publisherContext(dataSourceTwo, jdbcTwo, slowSender);
 
-        ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
-        executor.scheduleAtFixedRate(
-                () -> txOne.executeWithoutResult(status -> publisherOne.publishPending()), 0, 50, TimeUnit.MILLISECONDS);
-        executor.scheduleAtFixedRate(
-                () -> txTwo.executeWithoutResult(status -> publisherTwo.publishPending()), 0, 50, TimeUnit.MILLISECONDS);
+        try {
+            OutboxPublisher publisherOne = publisherContextOne.getBean(OutboxPublisher.class);
+            OutboxPublisher publisherTwo = publisherContextTwo.getBean(OutboxPublisher.class);
 
-        await().atMost(Duration.ofSeconds(30)).until(() -> jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM outbox WHERE sent_at IS NOT NULL", Integer.class) == 50);
+            ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
+            executor.scheduleAtFixedRate(publisherOne::publishPending, 0, 50, TimeUnit.MILLISECONDS);
+            executor.scheduleAtFixedRate(publisherTwo::publishPending, 0, 50, TimeUnit.MILLISECONDS);
 
-        executor.shutdownNow();
+            await().atMost(Duration.ofSeconds(30)).until(() -> jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM outbox WHERE sent_at IS NOT NULL", Integer.class) == 50);
 
-        try (KafkaConsumer<String, String> consumer = OutboxInboxTestSupport.newConsumer(topic)) {
-            List<ConsumerRecord<String, String>> records =
-                    OutboxInboxTestSupport.consumeUntilQuiet(consumer, 50);
-            assertEquals(50, records.size());
-            List<String> consumedEventIds = new ArrayList<>();
-            for (ConsumerRecord<String, String> record : records) {
-                String eventIdHeader = new String(
-                        record.headers().lastHeader(OutboxMessageSender.EVENT_ID_HEADER).value(),
-                        StandardCharsets.UTF_8);
-                consumedEventIds.add(eventIdHeader);
-                assertNotNull(record.timestamp());
+            executor.shutdownNow();
+
+            try (KafkaConsumer<String, String> consumer = OutboxInboxTestSupport.newConsumer(topic)) {
+                List<ConsumerRecord<String, String>> records =
+                        OutboxInboxTestSupport.consumeUntilQuiet(consumer, 50);
+                assertEquals(50, records.size());
+                List<String> consumedEventIds = new ArrayList<>();
+                for (ConsumerRecord<String, String> record : records) {
+                    String eventIdHeader = new String(
+                            record.headers().lastHeader(OutboxMessageSender.EVENT_ID_HEADER).value(),
+                            StandardCharsets.UTF_8);
+                    consumedEventIds.add(eventIdHeader);
+                    assertNotNull(record.timestamp());
+                }
+                for (int i = 1; i <= 50; i++) {
+                    assertEquals(eventId(i).toString(), consumedEventIds.get(i - 1));
+                }
             }
-            for (int i = 1; i <= 50; i++) {
-                assertEquals(eventId(i).toString(), consumedEventIds.get(i - 1));
-            }
+
+            assertEquals(
+                    50,
+                    jdbcTemplate.queryForObject("SELECT count(*) FROM outbox WHERE sent_at IS NOT NULL", Integer.class));
+
+            assertLockOutcomeMix(publisherOneLockOutcomes);
+            assertLockOutcomeMix(publisherTwoLockOutcomes);
+        } finally {
+            publisherContextTwo.close();
+            publisherContextOne.close();
         }
+    }
 
-        assertEquals(50, jdbcTemplate.queryForObject("SELECT count(*) FROM outbox WHERE sent_at IS NOT NULL", Integer.class));
-
-        assertLockOutcomeMix(publisherOneLockOutcomes);
-        assertLockOutcomeMix(publisherTwoLockOutcomes);
+    private static AnnotationConfigApplicationContext publisherContext(
+            DataSource dataSource, JdbcTemplate jdbcTemplate, OutboxMessageSender outboxMessageSender) {
+        AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext();
+        context.getBeanFactory().registerSingleton("dataSource", dataSource);
+        context.getBeanFactory().registerSingleton("jdbcTemplate", jdbcTemplate);
+        context.getBeanFactory().registerSingleton("outboxMessageSender", outboxMessageSender);
+        context.register(OutboxConcurrentPublisherConfig.class);
+        context.refresh();
+        return context;
     }
 
     private static void assertLockOutcomeMix(List<Boolean> lockOutcomes) {
