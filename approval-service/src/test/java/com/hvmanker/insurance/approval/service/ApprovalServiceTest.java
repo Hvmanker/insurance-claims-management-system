@@ -18,6 +18,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -30,6 +32,7 @@ import static com.hvmanker.insurance.common.KafkaTopics.CLAIM_REJECTED;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -61,11 +64,18 @@ class ApprovalServiceTest {
     @Mock
     private DecisionConflictRecorder decisionConflictRecorder;
 
+    @Mock
+    private TransactionTemplate transactionTemplate;
+
     private ApprovalService approvalService;
     private ListAppender<ILoggingEvent> logAppender;
 
     @BeforeEach
     void setUp() {
+        lenient().when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
+            TransactionCallback<?> callback = invocation.getArgument(0);
+            return callback.doInTransaction(null);
+        });
         approvalService = new ApprovalService(
                 approvalRepository,
                 claimWorkflowRepository,
@@ -73,7 +83,8 @@ class ApprovalServiceTest {
                 inboxGuard,
                 outboxWriter,
                 objectMapper,
-                decisionConflictRecorder);
+                decisionConflictRecorder,
+                transactionTemplate);
         Logger logger = (Logger) LoggerFactory.getLogger(ApprovalService.class);
         logAppender = new ListAppender<>();
         logAppender.start();

@@ -21,6 +21,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -62,11 +64,19 @@ class ClaimSubmittedListenerTest {
     @Mock
     private DecisionConflictRecorder decisionConflictRecorder;
 
+    @Mock
+    private TransactionTemplate transactionTemplate;
+
     private ClaimSubmittedListener listener;
     private ListAppender<ILoggingEvent> logAppender;
 
     @BeforeEach
     void setUp() throws Exception {
+        org.mockito.Mockito.lenient().when(transactionTemplate.execute(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(invocation -> {
+                    TransactionCallback<?> callback = invocation.getArgument(0);
+                    return callback.doInTransaction(null);
+                });
         ApprovalService approvalService = new ApprovalService(
                 approvalRepository,
                 claimWorkflowRepository,
@@ -74,7 +84,8 @@ class ClaimSubmittedListenerTest {
                 inboxGuard,
                 outboxWriter,
                 objectMapper,
-                decisionConflictRecorder);
+                decisionConflictRecorder,
+                transactionTemplate);
         listener = new ClaimSubmittedListener(approvalService);
 
         Logger logger = (Logger) LoggerFactory.getLogger(ClaimSubmittedListener.class);

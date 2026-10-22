@@ -2,14 +2,21 @@ package com.hvmanker.insurance.approval.config;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InternalApiTokenStartupTest {
+    @Configuration
+    @Import(InternalApiSecurityConfig.class)
+    static class FilterScanConfiguration {
+    }
+
     private final ApplicationContextRunner contextRunner =
-            new ApplicationContextRunner().withUserConfiguration(InternalApiSecurityConfig.class);
+            new ApplicationContextRunner().withUserConfiguration(FilterScanConfiguration.class);
 
     @Test
     void blankServiceTokenFailsStartup() {
