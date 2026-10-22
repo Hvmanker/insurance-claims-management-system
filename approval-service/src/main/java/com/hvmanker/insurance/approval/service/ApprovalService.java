@@ -149,9 +149,9 @@ public class ApprovalService {
     public DecisionResult recordHumanDecision(UUID claimId, InternalDecisionRequest request) {
         ApprovalDecision action = InternalDecisionValidator.validate(request);
         ClaimWorkflow workflow = claimWorkflowRepository.findById(claimId).orElse(null);
-        if (workflow != null) {
+        if (workflow != null && action == ApprovalDecision.APPROVED) {
             InternalDecisionValidator.validateApprovedAmountWithinClaim(
-                    request, workflow.getClaimedAmount(), action);
+                    request.approvedAmount(), workflow.getClaimedAmount());
         }
         return transactionTemplate.execute(status -> decide(
                 claimId,

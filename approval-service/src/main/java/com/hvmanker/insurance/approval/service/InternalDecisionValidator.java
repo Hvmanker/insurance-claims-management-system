@@ -46,12 +46,7 @@ public final class InternalDecisionValidator {
         return action;
     }
 
-    public static void validateApprovedAmountWithinClaim(
-            InternalDecisionRequest request, BigDecimal claimedAmount, ApprovalDecision action) {
-        if (action != ApprovalDecision.APPROVED) {
-            return;
-        }
-        BigDecimal approvedAmount = request.approvedAmount();
+    public static void validateApprovedAmountWithinClaim(BigDecimal approvedAmount, BigDecimal claimedAmount) {
         if (approvedAmount == null) {
             return;
         }
