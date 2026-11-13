@@ -1,0 +1,54 @@
+package com.hvmanker.insurance.approval.domain;
+
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+import java.math.BigDecimal;
+import java.util.UUID;
+
+@Repository
+public class ClaimWorkflowStore {
+    private final JdbcTemplate jdbcTemplate;
+
+    public ClaimWorkflowStore(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    public boolean insertIfAbsent(UUID claimId, String status, String policyNumber, BigDecimal claimedAmount) {
+        int inserted = jdbcTemplate.update(
+                """
+                INSERT INTO claim_workflow (claim_id, status, policy_number, claimed_amount, updated_at)
+                VALUES (?, ?, ?, ?, now())
+                ON CONFLICT (claim_id) DO NOTHING
+                """,
+                claimId,
+                status,
+                policyNumber,
+                claimedAmount);
+        return inserted == 1;
+    }
+
+    public int transitionFromAnalysisPending(UUID claimId, String newStatus) {
+        return jdbcTemplate.update(
+                """
+                UPDATE claim_workflow
+                SET status = ?, updated_at = now()
+                WHERE claim_id = ?
+                  AND status = 'ANALYSIS_PENDING'
+                """,
+                newStatus,
+                claimId);
+    }
+
+    public int transitionDecidedStatus(UUID claimId, String newStatus) {
+        return jdbcTemplate.update(
+                """
+                UPDATE claim_workflow
+                SET status = ?, updated_at = now()
+                WHERE claim_id = ?
+                  AND status IN ('ANALYSIS_PENDING', 'REVIEW_READY')
+                """,
+                newStatus,
+                claimId);
+    }
+}
