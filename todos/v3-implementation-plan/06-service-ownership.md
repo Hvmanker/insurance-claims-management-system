@@ -24,9 +24,13 @@ No service writes another service's tables. Each service owns a schema in one Po
 - Submit requires an `Idempotency-Key` header so a double click or retry cannot create two submissions. The database unique constraint is the real guard. Redis is only a fast path from slice 4.
 - Existing status values are mapped by an additive Flyway migration. Confirm current values in slice 0. They are `SUBMITTED`, `APPROVED`, `REJECTED`, and `SETTLED` as of this writing.
 
-## Read model
+## Read model & event projection synchronization
 
-Claim-service is what the UI reads. Approval and settlement publish `claim.decided` and `settlement.simulated`. Claim-service applies those events to its read model through the inbox. The UI can show an "updating" state because this path is eventually consistent.
+Claim-service is the authoritative public read model that the UI queries. Cross-service transitions are synchronized via Kafka events and the transactional inbox:
+1. When `approval-service` issues `MORE_INFO_REQUESTED`, `ESCALATED`, `APPROVED`, or `REJECTED`, it publishes `claim.decided` (or specific sub-events) via its transactional outbox.
+2. `claim-service` consumes these events through its inbox, updates the authoritative status in the `claims` table, inserts a `claim_events` timeline row, and invalidates Redis cache.
+3. When an insured uploads requested documents in `claim-service`, `claim-service` validates that all required documents are in `READY` status, updates the claim to `ANALYSIS_PENDING`, and publishes `claim.documents_provided` to re-trigger worker analysis.
+4. When the Spring Batch expiry job executes (ADR-012), `claim-service` identifies claims remaining in `MORE_INFO_REQUESTED` past the deadline, transitions them to `EXPIRED`, and publishes `claim.expired`.
 
 ## Why the split stays
 

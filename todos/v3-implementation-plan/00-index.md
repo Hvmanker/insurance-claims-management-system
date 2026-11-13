@@ -43,11 +43,12 @@ Sections 7 and 8 of the source plan are deferred:
 24. [32-test-matrix.md](32-test-matrix.md)
 25. [33-risks-cut-order-and-narrative.md](33-risks-cut-order-and-narrative.md)
 26. [34-glossary-and-open-questions.md](34-glossary-and-open-questions.md)
+27. [35-phased-execution-plan.md](35-phased-execution-plan.md) — Comprehensive v3 phased execution plan, role loop, and risk matrix.
 
 ## Related folders
 
 - [ea-exceptions/](ea-exceptions/) — one record per Gap or Partly row. Copy into `docs/ea-exceptions/` in slice 5.
-- [../architecture-decisions/](../architecture-decisions/) — ADR-001 through ADR-017.
+- [../architecture-decisions/](../architecture-decisions/) — ADR-001 through ADR-019 (including ADR-018 Authority Limits and ADR-019 Bedrock Credit Guard).
 
 ## How to use this set
 

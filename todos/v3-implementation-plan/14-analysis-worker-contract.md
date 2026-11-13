@@ -11,9 +11,9 @@ The worker extracts document facts with evidence and confidence and raises non-b
 
 The worker consumes `claim.submitted`, reads the READY documents from storage, and publishes `claim.analysis.completed` with:
 
-- extracted `invoice_number`, `provider_name`, `date_of_service`, line items, and `billed_amount` as a decimal string with currency;
+- extracted `estimate_reference`, `repair_facility`, `date_of_loss`, line items (parts, labor, paint), and `total_repair_cost` as a decimal string with currency (replaces withdrawn medical draft fields `provider_name`, `date_of_service` per ADR-002 auto damage domain);
 - per-field confidence and evidence (page and text span);
-- non-binding flags such as `AMOUNT_MISMATCH`, `DATE_MISALIGNED`, `DUPLICATE_INVOICE_NUMBER`, `LINE_ITEM_OUTLIER`, `UNREADABLE_DOCUMENT`, `SUSPECTED_INSTRUCTION_IN_DOCUMENT`;
+- non-binding flags such as `AMOUNT_MISMATCH`, `LOSS_DATE_MISALIGNED`, `DUPLICATE_ESTIMATE_NUMBER`, `LABOR_RATE_OUTLIER`, `PARTS_MARKUP_OUTLIER`, `UNREADABLE_DOCUMENT`, `SUSPECTED_INSTRUCTION_IN_DOCUMENT`;
 - the parser and model version.
 
 There is no `AUTO_APPROVE` and no authoritative `risk_score` in the payload. Invalid, late, or missing output sends the claim to `REVIEW_READY` with `ANALYSIS_FAILED`.

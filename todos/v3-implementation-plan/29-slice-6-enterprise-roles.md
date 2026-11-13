@@ -1,7 +1,7 @@
 # Slice 6: Enterprise roles and workflow
 
 Length: 6 to 8 days
-Depends on: slice 4 gate, unless slice 5 was inserted and its gate is also required by the team. The source plan says no other slice starts before the previous gate. If slice 5 moved, the previous business gate is still slice 4.
+Depends on: Slice 4 gate (reliability and idempotency) and Slice 5A gate (CI and logging allowlist, ensuring audit and role endpoints do not leak PII). Slice 5B (SNS/SQS emulators and batch expiry) may run after Slice 6 without blocking role API delivery.
 UI: none in this slice. Screens are slice 7. The API must be complete enough for those screens.
 
 ## Work

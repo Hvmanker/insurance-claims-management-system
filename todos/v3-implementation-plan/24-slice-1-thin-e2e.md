@@ -15,7 +15,8 @@ UI: insured home, claim creation and status; adjuster queue and decision form; s
 - Rule engine in approval-service with the decision table.
 - Adjuster approve, reject, and request-more-info endpoints.
 - Simulated settlement and read-model update in claim-service.
-- Minimal dynamic UI on the shared app shell: sign in, create and submit a claim, status updates (SSE with polling fallback), adjuster queue and decision.
+- Spring Cloud Gateway edge router introduced into Docker Compose (per ADR-013) to front the services.
+- Minimal dynamic Next.js UI on the shared app shell: sign in, create and submit a claim (Auto only, ADR-002), status updates (SSE with polling fallback), adjuster queue and decision.
 - Audit rows and optimistic version on decisions.
 
 ## Gate

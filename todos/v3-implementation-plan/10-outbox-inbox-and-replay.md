@@ -9,6 +9,9 @@ ADR: [ADR-005](../architecture-decisions/ADR-005-kafka-transactional-outbox.md)
 
 Each producer writes business state and an outbox row in one database transaction. A publisher polls unsent rows, publishes, then marks them sent. A crash between commit and publish delays the event. It does not lose it.
 
+**Publisher Concurrency Control**:
+In Slice 1A, multi-instance outbox publisher safety is achieved directly via PostgreSQL row-level locks using `SELECT ... FOR UPDATE SKIP LOCKED` on polling batches. This guarantees that multiple publisher instances or threads cannot claim the same outbox row concurrently, avoiding dual publishing from day one without waiting for Redis distributed locks in Slice 6.
+
 Each consumer inserts the event id and applies side effects in the same transaction. A redelivered event does nothing. Offsets are committed only after the effect and the dedupe record are durable.
 
 Failures take bounded retries with backoff, then the dead-letter topic. An operator command re-publishes a DLT event. A test proves a failed event can be reprocessed. DLT metadata is sanitized: no payloads, no document text.

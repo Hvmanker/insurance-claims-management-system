@@ -28,7 +28,21 @@ That AGENT behavior is an operational decision role. The v3 Agent role is a brok
 
 Sessions are servlet sessions on claim-service. The cookie is HttpOnly and SameSite strict. CSRF is disabled in `SecurityConfig`, and `authorizeHttpRequests` permits every request. Method security is enabled, so enforcement depends on annotations at call sites. v3 requires CSRF on POST, PUT, and DELETE, and a permission check on every endpoint.
 
-Passwords use BCrypt strength 12. Migration `V2__add_portal_accounts_and_claim_reason.sql` inserts `agent@insureflow.local`. The README prints the seeded agent password. Slice 0 moves that credential to an environment-driven seed profile.
+Passwords use BCrypt strength 12.
+
+### Existing Flyway Migrations Inventory
+
+The `claim-service` schema currently executes four migrations (`claim-service/src/main/resources/db/migration/`):
+
+1. **`V1__create_claims.sql`**: Creates `claims` table (`id`, `policy_number`, `claim_type`, `estimated_amount`, `status`, `created_at`, `updated_at`).
+2. **`V2__add_portal_accounts_and_claim_reason.sql`**: Creates `portal_users` table (`id`, `email`, `password_hash`, `role`, `created_at`), adds `reason` and `insured_id` to `claims`. (The default demo user insertion was removed in Phase 0.4 and moved to the environment-driven seed profile).
+3. **`V3__add_claim_description.sql`**: Adds `description VARCHAR(2000)` to `claims`, backfilling from `reason`.
+4. **`V4__create_claim_events.sql`**: Creates `claim_events` timeline table (`id UUID`, `claim_id UUID REFERENCES claims`, `event_type VARCHAR(40)`, `title VARCHAR(120)`, `detail VARCHAR(1000)`, `actor VARCHAR(120)`, `occurred_at TIMESTAMPTZ`), indexed on `(claim_id, occurred_at ASC)`.
+
+**Architectural Assessment of `claim_events` (V4)**:
+Migration V4 introduces a timeline table used by the portal. However, it lacks immutable reason codes, optimistic lock `version`, rule set version, and `correlation_id` fields required by v3 audit compliance. Slice 1C and Slice 6 maintain `claim_events` as an end-user UI timeline while introducing an append-only `claim_audit_log` for regulatory compliance.
+
+The README printed the seeded agent password; Phase 0.4 moved that credential to an environment-driven demo profile.
 
 ## Statuses and money rules today
 
@@ -52,13 +66,12 @@ v3 adds a nine-state core plus `SIMULATED_SETTLED`, and later `ESCALATED` and `U
 
 ## Ports
 
-`claim-service` listens on 8081. Compose publishes `8081:8081`. The README tells readers to open `http://localhost:8085/dashboard` and also shows `http://localhost:8081/dashboard` and a curl to `http://localhost:8081/claims`. Slice 0 makes the README match Compose.
+`claim-service` listens on 8081. In Phase 0.3, Docker Compose was hardened to publish only `8081:8081` on the host, isolating PostgreSQL (5432), Redis (6379), Kafka (9092), and internal service ports (8082, 8083, 8084) to the private Compose network.
 
-Other host ports in Compose: approval 8082, settlement 8083, notification 8084.
+## Logging audit verified in slice 0
 
-## Logging to verify in slice 0
-
-The plan requires an audit of log call sites, especially notification-service, before the allowlist is enforced. This document does not claim that audit is finished.
+The Phase 0.5 audit identified and eliminated sensitive data logging in `notification-service`:
+`WorkflowNotificationListener.java` previously logged `policyNumber`, `approvedAmount`, `reason`, and `paidAmount`. This was remediated in Phase 0.5 (test matrix row `TM-B`), enforcing masked event logs in compliance with [21-security-pii-and-logging.md](21-security-pii-and-logging.md).
 
 ## Implication
 
